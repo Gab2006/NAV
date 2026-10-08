@@ -12,7 +12,8 @@ import { Film, HardDrive, Loader2, Search, Server, Tv, X } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface HomeViewProps {
-  heroItem: MediaDetail | MediaItem;
+  heroItem?: MediaDetail | MediaItem;
+  heroItems?: (MediaDetail | MediaItem)[];
   trending: MediaItem[];
   movies: MediaItem[];
   tvShows: MediaItem[];
@@ -23,6 +24,7 @@ interface HomeViewProps {
 
 export function HomeView({
   heroItem,
+  heroItems,
   trending,
   movies,
   tvShows,
@@ -109,6 +111,7 @@ export function HomeView({
     hasNextPage: hasNextCategoryPage,
     isFetchingNextPage: isFetchingNextCategoryPage,
     isLoading: isCategoryLoading,
+    refetch: refetchCategory,
   } = useInfiniteQuery<SearchResponse>({
     queryKey: ["media-category-api", activeCategory],
     queryFn: async ({ pageParam = 1 }) => {
@@ -128,6 +131,14 @@ export function HomeView({
     enabled: isDynamicCategory,
     staleTime: 1000 * 60 * 5,
   });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      refetchCategory();
+    };
+    window.addEventListener("nas-media-updated", handleUpdate);
+    return () => window.removeEventListener("nas-media-updated", handleUpdate);
+  }, [refetchCategory]);
 
 
   // Flattened array of category results with deduplication
@@ -279,7 +290,7 @@ export function HomeView({
             >
               {/* Cinematic Hero Billboard */}
               <div className="-mt-[70px] sm:-mt-[76px]">
-                <HeroBanner media={heroItem} />
+                <HeroBanner items={heroItems} media={heroItem} />
               </div>
 
               {/* Content Rows Section */}

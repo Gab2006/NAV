@@ -1,5 +1,6 @@
 import { getNasLibraryMedia } from "@/lib/nas-service";
 import {
+  getHeroMovies,
   getNewReleases,
   getPaginatedMedia,
   getPopularMovies,
@@ -34,8 +35,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 3. If no category parameter, return all dynamic home sections
-    const [trending, movies, tvShows, newReleases, topRated, nasLibrary] =
+    const [heroMovies, trending, movies, tvShows, newReleases, topRated, nasLibrary] =
       await Promise.all([
+        getHeroMovies(5),
         getTrending(1),
         getPopularMovies(1),
         getPopularTV(1),
@@ -45,7 +47,8 @@ export async function GET(req: NextRequest) {
       ]);
 
     return NextResponse.json({
-      hero: trending[0] || movies[0] || null,
+      hero: heroMovies[0] || trending[0] || movies[0] || null,
+      heroItems: heroMovies,
       trending,
       movies,
       tvShows,

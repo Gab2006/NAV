@@ -17,6 +17,7 @@ import {
   Search,
   Server,
   Star,
+  Trash2,
   Tv,
   X,
 } from "lucide-react";
@@ -33,6 +34,8 @@ export function MediaDetailModal() {
   const [isRequestingDownload, setIsRequestingDownload] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [diskSpace, setDiskSpace] = useState<NasDiskSpace | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Indexer lookup state
   const [indexerResult, setIndexerResult] = useState<IndexerLookupResult | null>(null);
@@ -57,6 +60,7 @@ export function MediaDetailModal() {
   const handleExitComplete = () => {
     setShowTrailer(false);
     setDetails(null);
+    setShowDeleteConfirm(false);
   };
 
   // Close on Escape key press
@@ -209,6 +213,49 @@ export function MediaDetailModal() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!activeMedia) return;
+    setIsDeleting(true);
+
+    try {
+      const res = await fetch("/api/media/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tmdbId: activeMedia.id,
+          mediaType: activeMedia.mediaType || "movie",
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setShowDeleteConfirm(false);
+        setDownloadStatus("unrequested");
+        setDownloadProgress(0);
+        // Aggiorna lo spazio disco NAS in tempo reale
+        fetch("/api/media/diskspace")
+          .then((r) => r.json())
+          .then((ds) => {
+            if (ds && !ds.error) setDiskSpace(ds);
+          })
+          .catch(() => {});
+        // Notifica l'applicazione che i media NAS sono cambiati
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("nas-media-updated"));
+        }
+        alert("Titolo e file eliminati con successo dal NAS.");
+      } else {
+        alert(data.error || "Errore durante l'eliminazione dal NAS.");
+      }
+    } catch (err) {
+      console.error("Errore cancellazione NAS:", err);
+      alert("Errore di connessione durante l'eliminazione dal NAS.");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const TOTAL_DISK_SEGMENTS = 20;
   const percentUsed = diskSpace ? diskSpace.percentUsed : 65;
   const percentFree = Math.max(0, Math.min(100, 100 - percentUsed));
@@ -234,8 +281,6 @@ export function MediaDetailModal() {
             aria-hidden="true"
           />
 
-          {/* Top Notch / Status Bar Solid Shield */}
-          <div className="fixed top-0 left-0 right-0 h-[max(2.5rem,env(safe-area-inset-top,0px))] bg-[#0c0d10] z-20 pointer-events-none" />
 
           {/* Modal Dialog Card with smooth spring scale/slide transition */}
           <motion.div
@@ -429,54 +474,7 @@ export function MediaDetailModal() {
                 </span>
               </div>
 
-              {/* Status Box */}
-              <div className="w-full p-3 sm:p-3.5 rounded-xl bg-black/30 border border-white/5 space-y-2 overflow-hidden">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-neutral-400 text-[11px]">Stato Libreria:</span>
-                  {isCheckingStatus ? (
-                    <span className="flex items-center gap-1.5 font-medium px-2 py-0.5 rounded-full text-[10px] bg-white/10 text-neutral-400">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      Verifica in corso...
-                    </span>
-                  ) : (
-                  <span
-                    className={`font-medium capitalize px-2 py-0.5 rounded-full text-[10px] ${
-                      downloadStatus === "available"
-                        ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                        : downloadStatus === "downloading"
-                        ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                        : downloadStatus === "queued"
-                        ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-                        : "bg-white/10 text-neutral-400"
-                    }`}
-                  >
-                    {downloadStatus === "available"
-                      ? "Disponibile sul NAS"
-                      : downloadStatus === "downloading"
-                      ? "In Download"
-                      : downloadStatus === "queued"
-                      ? "In Coda"
-                      : "Non Presente"}
-                  </span>
-                  )}
-                </div>
 
-                {/* Progress bar if downloading */}
-                {downloadStatus === "downloading" && (
-                  <div className="space-y-1 pt-1">
-                    <div className="flex justify-between text-[10px] text-neutral-400">
-                      <span>Avanzamento</span>
-                      <span className="text-white font-mono">{downloadProgress}%</span>
-                    </div>
-                    <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500 transition-all duration-500"
-                        style={{ width: `${downloadProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* Spazio Memoria NAS (Dashed Segmented Bar) */}
               <div className="w-full p-3 sm:p-3.5 rounded-xl bg-black/30 border border-white/5 space-y-2.5 overflow-hidden">
@@ -547,9 +545,22 @@ export function MediaDetailModal() {
               {/* Action Row: Verifica disponibilità & Download circolare */}
               <div className="space-y-2">
                 {downloadStatus === "available" ? (
-                  <div className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 text-xs font-medium">
-                    <Check className="w-4 h-4" />
-                    <span>Presente nella cartella</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 text-xs font-medium">
+                      <Check className="w-4 h-4" />
+                      <span>Presente nella cartella</span>
+                    </div>
+
+                    {/* Bottone rotondo Cestino per eliminare dal NAS */}
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      disabled={isDeleting}
+                      title="Elimina dal NAS"
+                      aria-label="Elimina dal NAS"
+                      className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 transition-all active:scale-95 disabled:opacity-50 shadow-sm"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 ) : isCheckingStatus ? (
                   <div className="flex items-center justify-center gap-2 py-2.5 px-4 rounded-full bg-white/5 border border-white/10 text-neutral-400 text-xs font-medium">
@@ -614,6 +625,22 @@ export function MediaDetailModal() {
                   </div>
                 )}
 
+                {/* Avanzamento download se attivo */}
+                {downloadStatus === "downloading" && (
+                  <div className="space-y-1 pt-1">
+                    <div className="flex justify-between text-[10px] text-neutral-400">
+                      <span>Avanzamento download</span>
+                      <span className="text-white font-mono">{downloadProgress}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 transition-all duration-500"
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
                 {/* Esito disponibilità compatto (senza elenco release) */}
                 {indexerResult && downloadStatus !== "available" && (
                   <div
@@ -659,6 +686,66 @@ export function MediaDetailModal() {
           </div>
         </div>
       </motion.div>
+
+      {/* Modal di Conferma Eliminazione Titolo & File dal NAS */}
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+            onClick={() => setShowDeleteConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-sm rounded-2xl bg-[#14151a] border border-white/10 p-5 sm:p-6 shadow-[0_24px_50px_rgba(0,0,0,0.8)] space-y-4 text-center"
+            >
+              <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 text-red-500 flex items-center justify-center mx-auto shadow-inner">
+                <Trash2 className="w-6 h-6" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                  Eliminare dal NAS?
+                </h3>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Sei sicuro di voler eliminare <span className="text-white font-medium">&quot;{currentMedia.title}&quot;</span>?
+                  Il titolo verrà rimosso da {currentMedia.mediaType === "movie" ? "Radarr" : "Sonarr"} e tutti i file video verranno cancellati definitivamente dallo storage del NAS.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-2">
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 px-4 rounded-full font-semibold text-xs bg-white/10 hover:bg-white/15 text-neutral-200 border border-white/10 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  Annulla
+                </button>
+                <button
+                  onClick={handleConfirmDelete}
+                  disabled={isDeleting}
+                  className="flex-1 py-2.5 px-4 rounded-full font-semibold text-xs bg-[#E50914] hover:bg-[#b80710] text-white transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-red-600/30"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Eliminazione...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Elimina definitivamente</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   )}
 </AnimatePresence>

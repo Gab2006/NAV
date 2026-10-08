@@ -2,6 +2,7 @@ import { HomeView } from "@/components/home-view";
 import { MOCK_HERO } from "@/lib/mock-data";
 import { getNasLibraryMedia } from "@/lib/nas-service";
 import {
+  getHeroMovies,
   getNewReleases,
   getPopularMovies,
   getPopularTV,
@@ -14,8 +15,9 @@ export const revalidate = 0;
 
 export default async function HomePage() {
   // Fetch lists concurrently from API & database
-  const [trending, movies, tvShows, newReleases, topRated, nasLibrary] =
+  const [heroMovies, trending, movies, tvShows, newReleases, topRated, nasLibrary] =
     await Promise.all([
+      getHeroMovies(5),
       getTrending(1),
       getPopularMovies(1),
       getPopularTV(1),
@@ -24,12 +26,10 @@ export default async function HomePage() {
       getNasLibraryMedia(),
     ]);
 
-  // Use the top trending item as hero if available, otherwise MOCK_HERO
-  const heroItem = trending.length > 0 ? trending[0] : MOCK_HERO;
-
   return (
     <HomeView
-      heroItem={heroItem}
+      heroItems={heroMovies}
+      heroItem={heroMovies[0] || trending[0] || MOCK_HERO}
       trending={trending}
       movies={movies}
       tvShows={tvShows}

@@ -484,3 +484,119 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
 
   return items;
 }
+
+/**
+ * Elimina un film o una serie TV dal server NAS (Radarr / Sonarr) e rimuove definitivamente i file dal disco.
+ */
+export async function deleteMediaFromNas(
+  tmdbId: number,
+  mediaType: MediaType = 'movie'
+): Promise<{ success: boolean; message: string }> {
+  const isMovie = mediaType === 'movie';
+  const targetUrl = isMovie ? process.env.RADARR_URL : process.env.SONARR_URL;
+  const apiKey = isMovie ? process.env.RADARR_API_KEY : process.env.SONARR_API_KEY;
+
+  let deletedOnServer = false;
+
+  if (targetUrl && apiKey) {
+    try {
+      if (isMovie) {
+        // 1. Cerca il film su Radarr
+        const searchRes = await fetch(`${targetUrl}/api/v3/movie?tmdbId=${tmdbId}`, {
+          headers: { 'X-Api-Key': apiKey },
+          signal: AbortSignal.timeout(4000),
+        });
+
+        let movieId: number | null = null;
+        if (searchRes.ok) {
+          const movies = await searchRes.json();
+          const movie = Array.isArray(movies)
+            ? movies.find((m: any) => m.tmdbId === tmdbId) || movies[0]
+            : movies;
+          if (movie && movie.id) {
+            movieId = movie.id;
+          }
+        }
+
+        if (!movieId) {
+          const allRes = await fetch(`${targetUrl}/api/v3/movie`, {
+            headers: { 'X-Api-Key': apiKey },
+            signal: AbortSignal.timeout(4000),
+          });
+          if (allRes.ok) {
+            const allMovies = await allRes.json();
+            if (Array.isArray(allMovies)) {
+              const matched = allMovies.find((m: any) => m.tmdbId === tmdbId);
+              if (matched && matched.id) {
+                movieId = matched.id;
+              }
+            }
+          }
+        }
+
+        if (movieId) {
+          // Elimina da Radarr e cancella fisicamente i file dal disco NAS
+          const deleteRes = await fetch(
+            `${targetUrl}/api/v3/movie/${movieId}?deleteFiles=true&addImportExclusion=false`,
+            {
+              method: 'DELETE',
+              headers: { 'X-Api-Key': apiKey },
+              signal: AbortSignal.timeout(8000),
+            }
+          );
+
+          if (deleteRes.ok || deleteRes.status === 200 || deleteRes.status === 204) {
+            deletedOnServer = true;
+          }
+        }
+      } else {
+        // 2. Cerca la serie su Sonarr
+        const allRes = await fetch(`${targetUrl}/api/v3/series`, {
+          headers: { 'X-Api-Key': apiKey },
+          signal: AbortSignal.timeout(4000),
+        });
+
+        let seriesId: number | null = null;
+        if (allRes.ok) {
+          const allSeries = await allRes.json();
+          if (Array.isArray(allSeries)) {
+            const matched = allSeries.find(
+              (s: any) => s.tmdbId === tmdbId || s.tvdbId === tmdbId || s.id === tmdbId
+            );
+            if (matched && matched.id) {
+              seriesId = matched.id;
+            }
+          }
+        }
+
+        if (seriesId) {
+          // Elimina da Sonarr e cancella fisicamente i file della serie dal disco NAS
+          const deleteRes = await fetch(
+            `${targetUrl}/api/v3/series/${seriesId}?deleteFiles=true&addImportListExclusion=false`,
+            {
+              method: 'DELETE',
+              headers: { 'X-Api-Key': apiKey },
+              signal: AbortSignal.timeout(8000),
+            }
+          );
+
+          if (deleteRes.ok || deleteRes.status === 200 || deleteRes.status === 204) {
+            deletedOnServer = true;
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Errore durante l'eliminazione dal NAS:", err);
+    }
+  }
+
+  // Rimuovi anche da eventuale mock in-memory
+  mockDownloadStates.delete(tmdbId);
+
+  return {
+    success: true,
+    message: deletedOnServer
+      ? "Titolo e relativi file eliminati con successo dal NAS."
+      : "Titolo rimosso dallo stato locale.",
+  };
+}

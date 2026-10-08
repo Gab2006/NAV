@@ -159,6 +159,45 @@ export async function getTopRated(page: number = 1): Promise<MediaItem[]> {
   }
 }
 
+export async function getHeroMovies(limit: number = 5): Promise<MediaItem[]> {
+  const apiKey = getApiKey();
+  if (!apiKey) return MOCK_TOP_RATED.slice(0, limit);
+
+  try {
+    // Esclude l'animazione (genere 16) e richiede almeno 3000 voti per garantire solo autentici capolavori del cinema
+    const res = await fetch(
+      `${TMDB_BASE_URL}/discover/movie?api_key=${apiKey}&language=it-IT&sort_by=vote_average.desc&vote_count.gte=3000&without_genres=16&page=1`,
+      { next: { revalidate: 3600 } }
+    );
+    if (!res.ok) throw new Error("TMDB Error");
+    const data = await res.json();
+    const filtered: MediaItem[] = (data.results || [])
+      .filter(
+        (m: any) =>
+          m.backdrop_path &&
+          m.poster_path &&
+          m.overview &&
+          m.overview.trim().length > 20
+      )
+      .map((m: any) => formatTmdbItem(m, "movie"));
+
+    if (filtered.length >= limit) {
+      return filtered.slice(0, limit);
+    }
+
+    if (filtered.length > 0) {
+      const rest = MOCK_TOP_RATED.filter(
+        (mock: MediaItem) => !filtered.some((f: MediaItem) => f.id === mock.id)
+      );
+      return [...filtered, ...rest].slice(0, limit);
+    }
+
+    return MOCK_TOP_RATED.slice(0, limit);
+  } catch {
+    return MOCK_TOP_RATED.slice(0, limit);
+  }
+}
+
 export async function getPaginatedMedia(
   category: string,
   page: number = 1

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_TMDB_API_KEY: ${NEXT_PUBLIC_TMDB_API_KEY:-4af07920bd2cb6485ba5a505a29ed954}
+        NEXT_PUBLIC_TMDB_API_KEY: ${NEXT_PUBLIC_TMDB_API_KEY}
     container_name: netstream
     restart: unless-stopped
     ports:
@@ -20,4 +20,7 @@ services:
       - PROWLARR_URL=${PROWLARR_URL}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY}
     env_file:
-      - .env.local
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false

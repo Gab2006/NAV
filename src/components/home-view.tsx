@@ -129,7 +129,8 @@ export function HomeView({
       return undefined;
     },
     enabled: isDynamicCategory,
-    staleTime: 1000 * 60 * 5,
+    staleTime: activeCategory === "nas" ? 2000 : 1000 * 60 * 5,
+    refetchInterval: activeCategory === "nas" ? 4000 : false,
   });
 
   useEffect(() => {
@@ -169,13 +170,20 @@ export function HomeView({
       });
   }, [categoryData, activeCategory, nasLibrary]);
 
-  // Titoli della libreria NAS filtrati (solo contenuti scaricati, e filtrati per Film / Serie TV se selezionato)
+  // Titoli della libreria NAS filtrati (inclusi contenuti scaricati, in coda, mancanti e non disponibili)
   const nasFilteredItems = useMemo(() => {
-    const downloadedOnly = liveCategoryResults.filter(
-      (item) => item.downloadStatus === "available" || item.downloadProgress === 100
+    const allLibraryItems = liveCategoryResults.filter(
+      (item) =>
+        item.downloadStatus === "available" ||
+        item.downloadStatus === "downloading" ||
+        item.downloadStatus === "queued" ||
+        item.downloadStatus === "missing" ||
+        item.downloadStatus === "not_available" ||
+        item.downloadStatus === "unmonitored" ||
+        item.downloadProgress === 100
     );
-    if (!libraryFilter) return downloadedOnly;
-    return downloadedOnly.filter((item) => item.mediaType === libraryFilter);
+    if (!libraryFilter) return allLibraryItems;
+    return allLibraryItems.filter((item) => item.mediaType === libraryFilter);
   }, [liveCategoryResults, libraryFilter]);
 
   const totalCategoryResults =
@@ -321,6 +329,7 @@ export function HomeView({
                     title="Disponibili sul tuo NAS"
                     items={nasLibrary}
                     isLarge={false}
+                    hideDownload={true}
                   />
                 )}
               </div>
@@ -372,7 +381,7 @@ export function HomeView({
                     {isSearchActive
                       ? "Risultati in tempo reale dal database multimediale."
                       : activeCategory === "nas"
-                      ? "Film e serie TV scaricati e disponibili per la visione sul NAS."
+                      ? "Film e serie TV scaricati o attualmente in fase di download sul NAS."
                       : "Catalogo dinamico sincronizzato via API direttamente dal database."}
                   </p>
                 </div>
@@ -454,10 +463,10 @@ export function HomeView({
                           ? "Nessun risultato trovato"
                           : activeCategory === "nas"
                           ? libraryFilter === "movie"
-                            ? "Nessun film scaricato sul NAS"
+                            ? "Nessun film nella libreria NAS"
                             : libraryFilter === "tv"
-                            ? "Nessuna serie TV scaricata sul NAS"
-                            : "Nessun titolo scaricato nel NAS"
+                            ? "Nessuna serie TV nella libreria NAS"
+                            : "Nessun titolo nella libreria NAS"
                           : "Nessun elemento trovato"}
                       </h3>
                       <p className="text-xs sm:text-sm text-neutral-500 max-w-md mx-auto">
@@ -465,10 +474,10 @@ export function HomeView({
                           ? `Non abbiamo trovato corrispondenze per "${searchQuery}".`
                           : activeCategory === "nas"
                           ? libraryFilter === "movie"
-                            ? "I film completati e scaricati tramite Radarr appariranno qui."
+                            ? "I film salvati o in fase di acquisizione tramite Radarr appariranno qui."
                             : libraryFilter === "tv"
-                            ? "Le serie TV con episodi scaricati tramite Sonarr appariranno qui."
-                            : "I contenuti scaricati e disponibili sul tuo server personale appariranno qui."
+                            ? "Le serie TV salvate o in fase di acquisizione tramite Sonarr appariranno qui."
+                            : "I contenuti disponibili o in fase di download sul tuo server appariranno qui."
                           : "Non ci sono titoli disponibili per questa categoria al momento."}
                       </p>
                       {activeCategory === "nas" && libraryFilter !== null ? (
@@ -476,7 +485,7 @@ export function HomeView({
                           onClick={() => setLibraryFilter(null)}
                           className="px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/15 border border-white/10 text-white text-xs font-medium transition-all active:scale-95"
                         >
-                          Mostra tutti i titoli scaricati
+                          Mostra tutti i titoli della libreria
                         </button>
                       ) : (
                         <button
@@ -502,6 +511,7 @@ export function HomeView({
                           media={item}
                           isLarge={true}
                           className="w-full aspect-[2/3]"
+                          hideDownload={activeCategory === "nas"}
                         />
                       ))}
                     </div>

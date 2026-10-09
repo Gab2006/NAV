@@ -157,8 +157,13 @@ export function MediaDetailModal() {
     ? new Date(currentMedia.releaseDate).getFullYear()
     : "2024";
 
+  const isDownloadUnavailable =
+    indexerResult !== null
+      ? !indexerResult.available
+      : downloadStatus === "missing" || downloadStatus === "not_available";
+
   const handleStartDownload = async () => {
-    if (!activeMedia) return;
+    if (!activeMedia || isDownloadUnavailable) return;
     setIsRequestingDownload(true);
     try {
       const year = parseInt(
@@ -268,15 +273,17 @@ export function MediaDetailModal() {
   return (
     <AnimatePresence onExitComplete={handleExitComplete}>
       {isOpen && activeMedia && currentMedia && (
-        <div className="fixed inset-0 z-[60] flex items-start justify-center p-0 sm:p-4 md:p-6 overflow-y-auto overscroll-contain">
-          {/* Solid 100% opaque backdrop eliminating any background visibility */}
-          <motion.div
-            key="modal-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
-            className="fixed inset-0 bg-[#0c0d10]"
+        <motion.div
+          key="modal-wrapper"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25, ease: "easeInOut" }}
+          className="fixed inset-0 z-[60] flex items-start justify-center p-0 sm:p-4 md:p-6 overflow-y-auto overscroll-contain bg-[#0c0d10]"
+        >
+          {/* Click-to-close overlay */}
+          <div
+            className="fixed inset-0"
             onClick={handleClose}
             aria-hidden="true"
           />
@@ -542,6 +549,33 @@ export function MediaDetailModal() {
                 </div>
               </div>
 
+              {/* Stato sintetico NAS – solo icona + testo, niente box */}
+              {downloadStatus !== "unrequested" && (
+                <div className="flex justify-end">
+                  {downloadStatus === "available" ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 whitespace-nowrap">
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      Disponibile su NAS
+                    </span>
+                  ) : downloadStatus === "downloading" ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 whitespace-nowrap">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      In download ({downloadProgress}%)
+                    </span>
+                  ) : downloadStatus === "queued" ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 whitespace-nowrap">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      In coda di download
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 whitespace-nowrap">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      Non disponibile
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Action Row: Verifica disponibilità & Download circolare */}
               <div className="space-y-2">
                 {downloadStatus === "available" ? (
@@ -593,23 +627,29 @@ export function MediaDetailModal() {
                       onClick={handleStartDownload}
                       disabled={
                         isRequestingDownload ||
+                        isCheckingIndexers ||
                         downloadStatus === "downloading" ||
-                        downloadStatus === "queued"
+                        downloadStatus === "queued" ||
+                        isDownloadUnavailable
                       }
                       title={
                         downloadStatus === "downloading"
                           ? "Download in corso"
                           : downloadStatus === "queued"
                           ? "In attesa di download"
-                          : "Scarica su NAS"
+                          : isDownloadUnavailable
+                          ? "Nessun file disponibile per il download"
+                          : "Scarica"
                       }
-                      aria-label="Scarica su NAS"
-                      className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 border ${
+                      aria-label="Scarica"
+                      className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all border ${
                         downloadStatus === "downloading"
                           ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
                           : downloadStatus === "queued"
                           ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                          : "bg-[#E50914] hover:bg-[#f21823] text-white border-transparent shadow-[0_0_12px_rgba(229,9,20,0.35)] disabled:opacity-50"
+                          : isDownloadUnavailable
+                          ? "bg-white/5 text-neutral-600 border-white/10 cursor-not-allowed opacity-40 shadow-none"
+                          : "bg-[#E50914] hover:bg-[#f21823] text-white border-transparent shadow-[0_0_12px_rgba(229,9,20,0.35)] active:scale-95 disabled:opacity-50"
                       }`}
                     >
                       {isRequestingDownload ? (
@@ -622,6 +662,19 @@ export function MediaDetailModal() {
                         <Download className="w-4 h-4" />
                       )}
                     </button>
+
+                    {/* Bottone elimina anche per contenuti già tracciati su Radarr/Sonarr */}
+                    {downloadStatus !== "unrequested" && (
+                      <button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        disabled={isDeleting}
+                        title="Rimuovi dal NAS"
+                        aria-label="Rimuovi dal NAS"
+                        className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/50 transition-all active:scale-95 disabled:opacity-50 shadow-sm"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -737,7 +790,7 @@ export function MediaDetailModal() {
                   ) : (
                     <>
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>Elimina definitivamente</span>
+                      <span>Elimina</span>
                     </>
                   )}
                 </button>
@@ -746,8 +799,8 @@ export function MediaDetailModal() {
           </div>
         )}
       </AnimatePresence>
-    </div>
-  )}
-</AnimatePresence>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

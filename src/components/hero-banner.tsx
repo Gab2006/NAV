@@ -87,9 +87,13 @@ export function HeroBanner({ media, items }: HeroBannerProps) {
 
   const isDownloading = downloadingId === currentMedia.id;
   const isDownloaded = downloadSuccessIds.has(currentMedia.id);
+  const isUnavailable =
+    currentMedia?.downloadStatus === "missing" ||
+    currentMedia?.downloadStatus === "not_available";
 
   const handleDownload = async (e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (isUnavailable) return;
     setDownloadingId(currentMedia.id);
 
     try {
@@ -224,12 +228,19 @@ export function HeroBanner({ media, items }: HeroBannerProps) {
 
                 <button
                   onClick={handleDownload}
-                  disabled={isDownloading}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold text-xs sm:text-sm transition-all active:scale-95 shadow-md ${
+                  disabled={isDownloading || isUnavailable}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-semibold text-xs sm:text-sm transition-all shadow-md ${
                     isDownloaded
-                      ? "bg-emerald-600/90 hover:bg-emerald-600 text-white"
-                      : "bg-[#E50914] hover:bg-[#f21823] text-white"
+                      ? "bg-emerald-600/90 hover:bg-emerald-600 text-white active:scale-95"
+                      : isUnavailable
+                      ? "bg-white/5 border border-white/10 text-neutral-500 cursor-not-allowed opacity-40 shadow-none"
+                      : "bg-[#E50914] hover:bg-[#f21823] text-white active:scale-95"
                   }`}
+                  title={
+                    isUnavailable
+                      ? "Nessun file disponibile per il download"
+                      : undefined
+                  }
                 >
                   {isDownloading ? (
                     <>
@@ -241,10 +252,15 @@ export function HeroBanner({ media, items }: HeroBannerProps) {
                       <Check className="w-4 h-4" />
                       <span>In coda sul NAS</span>
                     </>
+                  ) : isUnavailable ? (
+                    <>
+                      <Download className="w-4 h-4 text-neutral-500" />
+                      <span>Non disponibile</span>
+                    </>
                   ) : (
                     <>
                       <Download className="w-4 h-4" />
-                      <span>Scarica su NAS</span>
+                      <span>Scarica</span>
                     </>
                   )}
                 </button>

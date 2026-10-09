@@ -1,6 +1,13 @@
 export type MediaType = 'movie' | 'tv';
 
-export type DownloadStatus = 'unrequested' | 'queued' | 'downloading' | 'available';
+export type DownloadStatus =
+  | 'unrequested'
+  | 'queued'
+  | 'downloading'
+  | 'available'
+  | 'missing'
+  | 'not_available'
+  | 'unmonitored';
 
 export interface Genre {
   id: number;
@@ -38,6 +45,7 @@ export interface MediaItem {
   popularity?: number;
   downloadStatus?: DownloadStatus;
   downloadProgress?: number;
+  statusLabel?: string;
 }
 
 export interface MediaDetail extends MediaItem {
@@ -50,6 +58,7 @@ export interface MediaDetail extends MediaItem {
   status?: string;
   downloadStatus?: DownloadStatus;
   downloadProgress?: number;
+  statusLabel?: string;
 }
 
 export interface NasDiskSpace {
@@ -69,6 +78,7 @@ export interface MediaStatusResponse {
   mediaType: MediaType;
   title: string;
   status: DownloadStatus;
+  statusLabel?: string;
   progress: number;
   quality?: string;
   service: 'radarr' | 'sonarr';

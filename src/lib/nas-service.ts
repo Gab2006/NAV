@@ -3,6 +3,7 @@ import { DownloadRequestPayload, DownloadStatus, MediaItem, MediaStatusResponse,
 // In-memory store for session demo / fallback when NAS is not connected
 const mockDownloadStates = new Map<number, {
   status: DownloadStatus;
+  statusLabel?: string;
   progress: number;
   mediaType: MediaType;
   title: string;
@@ -115,7 +116,7 @@ export async function requestDownload(payload: DownloadRequestPayload): Promise<
 export async function checkMediaExistsOnNas(
   tmdbId: number,
   mediaType: MediaType
-): Promise<{ found: boolean; hasFile: boolean; status: DownloadStatus; progress: number; title: string } | null> {
+): Promise<{ found: boolean; hasFile: boolean; status: DownloadStatus; statusLabel: string; progress: number; title: string } | null> {
   const isMovie = mediaType === 'movie';
   const targetUrl = isMovie ? process.env.RADARR_URL : process.env.SONARR_URL;
   const apiKey = isMovie ? process.env.RADARR_API_KEY : process.env.SONARR_API_KEY;
@@ -132,14 +133,15 @@ export async function checkMediaExistsOnNas(
       if (!res.ok) return null;
       const movies = await res.json();
       const movie = Array.isArray(movies) ? movies[0] : movies;
-      if (!movie || !movie.id) return { found: false, hasFile: false, status: 'unrequested', progress: 0, title: '' };
+      if (!movie || !movie.id) return { found: false, hasFile: false, status: 'unrequested', statusLabel: '', progress: 0, title: '' };
 
-      const hasFile = movie.hasFile === true;
+      const hasFile = movie.hasFile === true || (typeof movie.movieFileId === 'number' && movie.movieFileId > 0);
       const isMonitored = movie.monitored === true;
 
       // Check active downloads in queue
       let downloadProgress = 0;
       let isDownloading = false;
+      let isQueued = false;
       try {
         const queueRes = await fetch(`${targetUrl}/api/v3/queue?movieId=${movie.id}`, {
           headers: { 'X-Api-Key': apiKey },
@@ -153,13 +155,46 @@ export async function checkMediaExistsOnNas(
             const sizeleft = record.sizeleft ?? 0;
             const size = record.size ?? 0;
             downloadProgress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
-            isDownloading = true;
+            if (record.status === 'downloading' || sizeleft < size) {
+              isDownloading = true;
+            } else {
+              isQueued = true;
+            }
           }
         }
       } catch { /* queue check optional */ }
 
-      const status: DownloadStatus = hasFile ? 'available' : isDownloading ? 'downloading' : isMonitored ? 'queued' : 'unrequested';
-      return { found: true, hasFile, status, progress: hasFile ? 100 : downloadProgress, title: movie.title || '' };
+      let status: DownloadStatus = 'unrequested';
+      let statusLabel = '';
+
+      if (hasFile) {
+        status = 'available';
+        statusLabel = 'Disponibile';
+      } else if (isDownloading) {
+        status = 'downloading';
+        statusLabel = 'In download';
+      } else if (isQueued) {
+        status = 'queued';
+        statusLabel = 'In coda';
+      } else if (!isMonitored) {
+        status = 'unmonitored';
+        statusLabel = 'Non monitorato';
+      } else if (!movie.isAvailable || movie.status === 'inCinemas' || movie.status === 'announced' || movie.status === 'tba') {
+        status = 'not_available';
+        statusLabel = 'Attualmente non disponibile';
+      } else {
+        status = 'missing';
+        statusLabel = 'Attualmente non disponibile';
+      }
+
+      return {
+        found: true,
+        hasFile,
+        status,
+        statusLabel,
+        progress: hasFile ? 100 : downloadProgress,
+        title: movie.title || '',
+      };
 
     } else {
       // Sonarr: GET /api/v3/series?tmdbId=<id>
@@ -170,16 +205,17 @@ export async function checkMediaExistsOnNas(
       if (!res.ok) return null;
       const allSeries = await res.json();
       const series = Array.isArray(allSeries) ? allSeries[0] : allSeries;
-      if (!series || !series.id) return { found: false, hasFile: false, status: 'unrequested', progress: 0, title: '' };
+      if (!series || !series.id) return { found: false, hasFile: false, status: 'unrequested', statusLabel: '', progress: 0, title: '' };
 
-      const episodeFileCount = series.episodeFileCount ?? 0;
-      const episodeCount = series.episodeCount ?? 0;
+      const episodeFileCount = series.statistics?.episodeFileCount ?? series.episodeFileCount ?? 0;
+      const totalEpisodeCount = series.statistics?.totalEpisodeCount ?? series.episodeCount ?? 0;
       const hasFile = episodeFileCount > 0;
       const isMonitored = series.monitored === true;
 
       // Check active downloads in queue
       let downloadProgress = 0;
       let isDownloading = false;
+      let isQueued = false;
       try {
         const queueRes = await fetch(`${targetUrl}/api/v3/queue?seriesId=${series.id}`, {
           headers: { 'X-Api-Key': apiKey },
@@ -193,21 +229,50 @@ export async function checkMediaExistsOnNas(
             const sizeleft = record.sizeleft ?? 0;
             const size = record.size ?? 0;
             downloadProgress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
-            isDownloading = true;
+            if (record.status === 'downloading' || sizeleft < size) {
+              isDownloading = true;
+            } else {
+              isQueued = true;
+            }
           }
         }
       } catch { /* queue check optional */ }
 
-      const status: DownloadStatus = isDownloading
-        ? 'downloading'
-        : hasFile
-        ? 'available'
-        : isMonitored
-        ? 'queued'
-        : 'unrequested';
+      let status: DownloadStatus = 'unrequested';
+      let statusLabel = '';
 
-      const progress = episodeCount > 0 ? Math.round((episodeFileCount / episodeCount) * 100) : downloadProgress;
-      return { found: true, hasFile, status, progress, title: series.title || '' };
+      if (hasFile) {
+        status = 'available';
+        statusLabel = 'Disponibile';
+      } else if (isDownloading) {
+        status = 'downloading';
+        statusLabel = 'In download';
+      } else if (isQueued) {
+        status = 'queued';
+        statusLabel = 'In coda';
+      } else if (!isMonitored) {
+        status = 'unmonitored';
+        statusLabel = 'Non monitorato';
+      } else if (series.status === 'upcoming' || totalEpisodeCount === 0) {
+        status = 'not_available';
+        statusLabel = 'Attualmente non disponibile';
+      } else {
+        status = 'missing';
+        statusLabel = 'Attualmente non disponibile';
+      }
+
+      const progress = hasFile
+        ? (totalEpisodeCount > 0 ? Math.round((episodeFileCount / totalEpisodeCount) * 100) : 100)
+        : downloadProgress;
+
+      return {
+        found: true,
+        hasFile,
+        status,
+        statusLabel,
+        progress,
+        title: series.title || '',
+      };
     }
   } catch {
     return null;
@@ -224,6 +289,7 @@ export async function getMediaStatus(tmdbId: number, mediaType: MediaType = 'mov
     if (nasResult.found) {
       mockDownloadStates.set(tmdbId, {
         status: nasResult.status,
+        statusLabel: nasResult.statusLabel,
         progress: nasResult.progress,
         mediaType,
         title: nasResult.title,
@@ -233,12 +299,12 @@ export async function getMediaStatus(tmdbId: number, mediaType: MediaType = 'mov
       // Present in NAS config but not found: keep mock state if any, else unrequested
       const existing = mockDownloadStates.get(tmdbId);
       if (!existing) {
-        return { tmdbId, mediaType, title: '', status: 'unrequested', progress: 0, service, lastUpdated: new Date().toISOString() };
+        return { tmdbId, mediaType, title: '', status: 'unrequested', statusLabel: '', progress: 0, service, lastUpdated: new Date().toISOString() };
       }
     }
     const state = mockDownloadStates.get(tmdbId);
     if (state) {
-      return { tmdbId, mediaType: state.mediaType, title: state.title, status: state.status, progress: state.progress, service, quality: '1080p / 4K', lastUpdated: state.updatedAt };
+      return { tmdbId, mediaType: state.mediaType, title: state.title, status: state.status, statusLabel: state.statusLabel, progress: state.progress, service, quality: '1080p / 4K', lastUpdated: state.updatedAt };
     }
   }
 
@@ -247,12 +313,15 @@ export async function getMediaStatus(tmdbId: number, mediaType: MediaType = 'mov
   if (existing) {
     if (existing.status === 'downloading' && existing.progress < 100) {
       existing.progress = Math.min(100, existing.progress + 15);
-      if (existing.progress >= 100) existing.status = 'available';
+      if (existing.progress >= 100) {
+        existing.status = 'available';
+        existing.statusLabel = 'Disponibile';
+      }
     }
-    return { tmdbId, mediaType: existing.mediaType, title: existing.title, status: existing.status, progress: existing.progress, service, quality: '1080p / 4K', lastUpdated: existing.updatedAt };
+    return { tmdbId, mediaType: existing.mediaType, title: existing.title, status: existing.status, statusLabel: existing.statusLabel, progress: existing.progress, service, quality: '1080p / 4K', lastUpdated: existing.updatedAt };
   }
 
-  return { tmdbId, mediaType, title: '', status: 'unrequested', progress: 0, service, lastUpdated: new Date().toISOString() };
+  return { tmdbId, mediaType, title: '', status: 'unrequested', statusLabel: '', progress: 0, service, lastUpdated: new Date().toISOString() };
 }
 
 function formatBytes(bytes: number, decimals = 1): string {
@@ -338,9 +407,32 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
   const items: MediaItem[] = [];
   let isNasConnected = false;
 
-  // Fetch Radarr movies
+  // Fetch Radarr movies & active queue
   if (radarrUrl && radarrApiKey) {
     try {
+      const queueMap = new Map<number, { progress: number; status: DownloadStatus }>();
+      try {
+        const qRes = await fetch(`${radarrUrl}/api/v3/queue`, {
+          headers: { "X-Api-Key": radarrApiKey },
+          signal: AbortSignal.timeout(2000),
+        });
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          const records = Array.isArray(qData) ? qData : qData.records || [];
+          for (const r of records) {
+            const mid = r.movieId;
+            if (mid) {
+              const size = r.size ?? 0;
+              const sizeleft = r.sizeleft ?? 0;
+              const progress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
+              queueMap.set(mid, { progress, status: "downloading" });
+            }
+          }
+        }
+      } catch {
+        // queue check optional
+      }
+
       const res = await fetch(`${radarrUrl}/api/v3/movie`, {
         headers: { "X-Api-Key": radarrApiKey },
         signal: AbortSignal.timeout(3000),
@@ -350,12 +442,31 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
         const movies = await res.json();
         if (Array.isArray(movies)) {
           movies.forEach((m: any) => {
-            // Include SOLO i film effettivamente scaricati e salvati sul disco NAS
-            const isDownloaded =
+            const hasFile =
               m.hasFile === true || (typeof m.movieFileId === "number" && m.movieFileId > 0);
-            if (!isDownloaded) {
-              return;
+            const inQueue = queueMap.get(m.id);
+
+            let downloadStatus: DownloadStatus = "unrequested";
+            let statusLabel = "";
+
+            if (hasFile) {
+              downloadStatus = "available";
+              statusLabel = "Disponibile";
+            } else if (inQueue) {
+              downloadStatus = inQueue.status;
+              statusLabel = inQueue.status === "downloading" ? "In download" : "In coda";
+            } else if (!m.monitored) {
+              downloadStatus = "unmonitored";
+              statusLabel = "Non monitorato";
+            } else if (!m.isAvailable || m.status === "inCinemas" || m.status === "announced" || m.status === "tba") {
+              downloadStatus = "not_available";
+              statusLabel = "Attualmente non disponibile";
+            } else {
+              downloadStatus = "missing";
+              statusLabel = "Attualmente non disponibile";
             }
+
+            const downloadProgress = hasFile ? 100 : inQueue?.progress ?? 0;
 
             const poster =
               m.images?.find((img: any) => img.coverType === "poster")?.remoteUrl ||
@@ -364,13 +475,26 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
               m.images?.find((img: any) => img.coverType === "fanart")?.remoteUrl ||
               m.images?.find((img: any) => img.coverType === "fanart")?.url;
 
+            let overview = m.overview;
+            if (!overview) {
+              if (hasFile) {
+                overview = "Titolo presente nella tua libreria Radarr sul server NAS.";
+              } else if (inQueue) {
+                overview = "Download in corso sul server NAS...";
+              } else if (downloadStatus === "not_available") {
+                overview = "Titolo monitorato sul server NAS. Non ancora disponibile o distribuito per il download.";
+              } else if (downloadStatus === "missing") {
+                overview = "Titolo monitorato sul server NAS. In attesa di una release disponibile per il download.";
+              } else {
+                overview = "Titolo presente sul server NAS.";
+              }
+            }
+
             items.push({
               id: m.tmdbId || m.id,
               title: m.title || "Film",
               originalTitle: m.originalTitle || m.title,
-              overview:
-                m.overview ||
-                "Titolo presente nella tua libreria Radarr sul server NAS.",
+              overview,
               posterPath: poster || null,
               backdropPath: backdrop || null,
               mediaType: "movie",
@@ -381,8 +505,9 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
               voteCount: m.ratings?.imdb?.votes || 100,
               genreIds: m.genres || [],
               popularity: 100,
-              downloadStatus: "available",
-              downloadProgress: 100,
+              downloadStatus,
+              downloadProgress,
+              statusLabel,
             });
           });
         }
@@ -392,9 +517,32 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
     }
   }
 
-  // Fetch Sonarr series
+  // Fetch Sonarr series & active queue
   if (sonarrUrl && sonarrApiKey) {
     try {
+      const sonarrQueueMap = new Map<number, { progress: number; status: DownloadStatus }>();
+      try {
+        const qRes = await fetch(`${sonarrUrl}/api/v3/queue`, {
+          headers: { "X-Api-Key": sonarrApiKey },
+          signal: AbortSignal.timeout(2000),
+        });
+        if (qRes.ok) {
+          const qData = await qRes.json();
+          const records = Array.isArray(qData) ? qData : qData.records || [];
+          for (const r of records) {
+            const sid = r.seriesId;
+            if (sid) {
+              const size = r.size ?? 0;
+              const sizeleft = r.sizeleft ?? 0;
+              const progress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
+              sonarrQueueMap.set(sid, { progress, status: "downloading" });
+            }
+          }
+        }
+      } catch {
+        // queue check optional
+      }
+
       const res = await fetch(`${sonarrUrl}/api/v3/series`, {
         headers: { "X-Api-Key": sonarrApiKey },
         signal: AbortSignal.timeout(3000),
@@ -404,14 +552,37 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
         const series = await res.json();
         if (Array.isArray(series)) {
           series.forEach((s: any) => {
-            // Include SOLO le serie TV con episodi effettivamente scaricati sul disco NAS
             const episodeFileCount =
               s.statistics?.episodeFileCount ?? s.episodeFileCount ?? 0;
+            const totalEpisodeCount =
+              s.statistics?.totalEpisodeCount ?? s.episodeCount ?? 0;
             const hasDownloadedFiles =
               episodeFileCount > 0 || (s.statistics?.sizeOnDisk && s.statistics.sizeOnDisk > 0);
-            if (!hasDownloadedFiles) {
-              return;
+            const inQueue = sonarrQueueMap.get(s.id);
+
+            let downloadStatus: DownloadStatus = "unrequested";
+            let statusLabel = "";
+
+            if (hasDownloadedFiles) {
+              downloadStatus = "available";
+              statusLabel = "Disponibile";
+            } else if (inQueue) {
+              downloadStatus = inQueue.status;
+              statusLabel = inQueue.status === "downloading" ? "In download" : "In coda";
+            } else if (!s.monitored) {
+              downloadStatus = "unmonitored";
+              statusLabel = "Non monitorato";
+            } else if (s.status === "upcoming" || totalEpisodeCount === 0) {
+              downloadStatus = "not_available";
+              statusLabel = "Attualmente non disponibile";
+            } else {
+              downloadStatus = "missing";
+              statusLabel = "Attualmente non disponibile";
             }
+
+            const downloadProgress = hasDownloadedFiles
+              ? (totalEpisodeCount > 0 ? Math.round((episodeFileCount / totalEpisodeCount) * 100) : 100)
+              : inQueue?.progress ?? 0;
 
             const poster =
               s.images?.find((img: any) => img.coverType === "poster")?.remoteUrl ||
@@ -420,13 +591,26 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
               s.images?.find((img: any) => img.coverType === "fanart")?.remoteUrl ||
               s.images?.find((img: any) => img.coverType === "fanart")?.url;
 
+            let overview = s.overview;
+            if (!overview) {
+              if (hasDownloadedFiles) {
+                overview = "Serie TV presente nella tua libreria Sonarr sul server NAS.";
+              } else if (inQueue) {
+                overview = "Download in corso sul server NAS...";
+              } else if (downloadStatus === "not_available") {
+                overview = "Serie TV monitorata sul server NAS. Non ancora disponibile o in programmazione.";
+              } else if (downloadStatus === "missing") {
+                overview = "Serie TV monitorata sul server NAS. In attesa di una release disponibile per gli episodi.";
+              } else {
+                overview = "Serie TV presente sul server NAS.";
+              }
+            }
+
             items.push({
               id: s.tmdbId || s.tvdbId || s.id,
               title: s.title || "Serie TV",
               originalTitle: s.originalTitle || s.title,
-              overview:
-                s.overview ||
-                "Serie TV presente nella tua libreria Sonarr sul server NAS.",
+              overview,
               posterPath: poster || null,
               backdropPath: backdrop || null,
               mediaType: "tv",
@@ -435,8 +619,9 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
               voteCount: s.ratings?.votes || 100,
               genreIds: s.genres || [],
               popularity: 100,
-              downloadStatus: "available",
-              downloadProgress: 100,
+              downloadStatus,
+              downloadProgress,
+              statusLabel,
             });
           });
         }

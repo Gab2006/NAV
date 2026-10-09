@@ -9,9 +9,15 @@ interface MediaRowProps {
   title: string;
   items: MediaItem[];
   isLarge?: boolean;
+  hideDownload?: boolean;
 }
 
-export function MediaRow({ title, items, isLarge = false }: MediaRowProps) {
+export function MediaRow({
+  title,
+  items,
+  isLarge = false,
+  hideDownload = false,
+}: MediaRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
   const handleScroll = (direction: "left" | "right") => {
@@ -75,6 +81,7 @@ export function MediaRow({ title, items, isLarge = false }: MediaRowProps) {
               key={`${item.mediaType || "media"}-${item.id}`}
               media={item}
               isLarge={isLarge}
+              hideDownload={hideDownload}
             />
           ))}
         </div>

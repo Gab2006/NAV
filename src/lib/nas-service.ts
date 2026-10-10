@@ -10,22 +10,6 @@ const mockDownloadStates = new Map<number, {
   updatedAt: string;
 }>();
 
-// Pre-populate a couple of demo states so user can immediately see different statuses
-mockDownloadStates.set(157336, { // Interstellar
-  status: 'available',
-  progress: 100,
-  mediaType: 'movie',
-  title: 'Interstellar',
-  updatedAt: new Date().toISOString()
-});
-mockDownloadStates.set(94605, { // Arcane
-  status: 'downloading',
-  progress: 68,
-  mediaType: 'tv',
-  title: 'Arcane',
-  updatedAt: new Date().toISOString()
-});
-
 export async function requestDownload(payload: DownloadRequestPayload): Promise<MediaStatusResponse> {
   const { tmdbId, mediaType, title } = payload;
   const isMovie = mediaType === 'movie';
@@ -296,9 +280,10 @@ export async function getMediaStatus(tmdbId: number, mediaType: MediaType = 'mov
         updatedAt: new Date().toISOString(),
       });
     } else {
-      // Present in NAS config but not found: keep mock state if any, else unrequested
+      // Present in NAS config but not found: keep mock state ONLY if it's currently downloading/queued
       const existing = mockDownloadStates.get(tmdbId);
-      if (!existing) {
+      if (!existing || (existing.status !== 'downloading' && existing.status !== 'queued')) {
+        mockDownloadStates.delete(tmdbId);
         return { tmdbId, mediaType, title: '', status: 'unrequested', statusLabel: '', progress: 0, service, lastUpdated: new Date().toISOString() };
       }
     }

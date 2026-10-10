@@ -147,8 +147,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     // ── STRATEGIA 1: Ricerca per TMDb ID tramite PROWLARR ────────────────────
-    // Se Prowlarr risponde (ok=true) con 0 risultati → il film NON è disponibile.
-    // Non usiamo il fallback testuale che genera falsi positivi.
+    let prowlarrTextFallback = true;
+    
     if (prowlarrUrl && prowlarrApiKey && tmdbId) {
       const category = isMovie ? "2000" : "5000";
       const idQuery = `{tmdb:${tmdbId}}`;
@@ -161,25 +161,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       );
 
       if (idRes.ok) {
-        // Prowlarr ha risposto: questo è il risultato definitivo
         const rawData = Array.isArray(idRes.data) ? idRes.data : [];
         const releases = parseReleases(rawData);
-        result.releases = releases;
-        result.count = releases.length;
-        result.available = releases.length > 0;
-        if (!result.available) {
-          result.error = rawData.length > 0
-            ? "Nessun file scaricabile (torrent senza seeders)"
-            : "Non trovato sugli indexer";
+        
+        if (releases.length > 0) {
+          result.releases = releases;
+          result.count = releases.length;
+          result.available = true;
+          return NextResponse.json(result);
         }
-        return NextResponse.json(result);
+        // Se non trova niente con l'ID (molti indexer non supportano ricerca per ID),
+        // procediamo con il fallback testuale.
       }
-      // idRes.ok === false: Prowlarr non raggiungibile, proviamo il fallback testuale
     }
 
     // ── STRATEGIA 2: Ricerca testuale tramite PROWLARR ───────────────────────
-    // Usata solo se: non abbiamo tmdbId, OPPURE Prowlarr non era raggiungibile.
-    if (prowlarrUrl && prowlarrApiKey && !tmdbId) {
+    if (prowlarrUrl && prowlarrApiKey && prowlarrTextFallback) {
       const category = isMovie ? "2000" : "5000";
       const cleanTitle = title.replace(/[:]/g, " ").trim();
       const termWithYear = year && isMovie ? `${cleanTitle} ${year}` : cleanTitle;
@@ -191,6 +188,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         12000
       );
 
+      // Se non trova nulla con titolo + anno, riprova solo col titolo
       if (
         (!prowlarrRes.ok || !Array.isArray(prowlarrRes.data) || prowlarrRes.data.length === 0) &&
         year &&
@@ -210,8 +208,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         result.releases = releases;
         result.count = releases.length;
         result.available = releases.length > 0;
-        if (!result.available && rawCount > 0) {
-          result.error = "Nessun file trovato per questo titolo negli indexer";
+        
+        if (!result.available) {
+          result.error = rawCount > 0 
+            ? "Nessun file scaricabile o corrispondente al titolo" 
+            : "Non trovato sugli indexer";
         }
         return NextResponse.json(result);
       }

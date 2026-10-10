@@ -307,6 +307,7 @@ export function HomeView({
                   title="Di Tendenza"
                   items={trending}
                   isLarge={true}
+                  priorityCount={4}
                 />
                 <MediaRow
                   title="Film in Primo Piano"
@@ -505,13 +506,15 @@ export function HomeView({
                 return (
                   <>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-4 sm:gap-5 lg:gap-6 pt-2 animate-[fadeIn_0.25s_ease-out]">
-                      {currentItems.map((item) => (
+                      {currentItems.map((item, index) => (
                         <MediaCard
                           key={`${item.mediaType}-${item.id}`}
                           media={item}
                           isLarge={true}
                           className="w-full aspect-[2/3]"
                           hideDownload={activeCategory === "nas"}
+                          priority={index < 4}
+                          loading={index < 4 ? "eager" : "lazy"}
                         />
                       ))}
                     </div>

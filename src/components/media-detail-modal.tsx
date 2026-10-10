@@ -21,18 +21,17 @@ import {
   Tv,
   X,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import React, { useEffect, useState } from "react";
 import { MediaImage } from "./media-image";
 
 export function MediaDetailModal() {
   const { selectedMedia, isOpen, closeModal } = useMediaModal();
-  const [details, setDetails] = useState<MediaDetail | null>(null);
   const [showTrailer, setShowTrailer] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("unrequested");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [isRequestingDownload, setIsRequestingDownload] = useState(false);
-  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [diskSpace, setDiskSpace] = useState<NasDiskSpace | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -59,7 +58,6 @@ export function MediaDetailModal() {
 
   const handleExitComplete = () => {
     setShowTrailer(false);
-    setDetails(null);
     setShowDeleteConfirm(false);
   };
 
@@ -88,65 +86,49 @@ export function MediaDetailModal() {
   const mediaId = activeMedia?.id;
   const mediaType = activeMedia?.mediaType || "movie";
 
-  // Fetch full details and live status on modal open
-  useEffect(() => {
-    if (!isOpen || !mediaId) {
-      return;
-    }
+  // 1. Fetch details con React Query caching (15 min cache)
+  const { data: fetchedDetails, isLoading: isLoadingDetails } = useQuery<MediaDetail | null>({
+    queryKey: ["media-details", mediaId, mediaType],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/media/details?id=${mediaId}&type=${mediaType}`);
+        if (res.ok) return await res.json();
+      } catch {}
+      return getMediaDetails(mediaId!, mediaType);
+    },
+    enabled: Boolean(isOpen && mediaId),
+    staleTime: 1000 * 60 * 15,
+  });
 
-    let isMounted = true;
+  const details = fetchedDetails || null;
 
-    // 1. Fetch details
-    fetch(`/api/media/details?id=${mediaId}&type=${mediaType}`)
-      .then((res) => (res.ok ? res.json() : getMediaDetails(mediaId, mediaType)))
-      .then((res) => {
-        if (isMounted) {
-          setDetails(res);
-        }
-      })
-      .catch(() => {
-        if (isMounted) {
-          getMediaDetails(mediaId, mediaType).then((fallback) => {
-            setDetails(fallback);
-          });
-        }
-      });
+  // 2. Fetch live NAS download status & storage con React Query
+  const { data: statusQueryData, isFetching: isCheckingStatusQuery } = useQuery({
+    queryKey: ["media-status", mediaId, mediaType],
+    queryFn: async () => {
+      const res = await fetch(`/api/media/status?tmdbId=${mediaId}&type=${mediaType}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: Boolean(isOpen && mediaId),
+    staleTime: 1000 * 15,
+  });
 
-    // 2. Fetch current NAS download status & storage
-    setIsCheckingStatus(true);
-    fetch(`/api/media/status?tmdbId=${mediaId}&type=${mediaType}`)
-      .then((res) => res.json())
-      .then((statusData) => {
-        if (isMounted) {
-          if (statusData.status) {
-            setDownloadStatus(statusData.status);
-            setDownloadProgress(statusData.progress || 0);
-          }
-          if (statusData.diskSpace) {
-            setDiskSpace(statusData.diskSpace);
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => { if (isMounted) setIsCheckingStatus(false); });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [isOpen, mediaId, mediaType]);
+  const isCheckingStatus = isCheckingStatusQuery;
 
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
+    if (statusQueryData) {
+      if (statusQueryData.status) {
+        setDownloadStatus(statusQueryData.status);
+        setDownloadProgress(statusQueryData.progress || 0);
+      }
+      if (statusQueryData.diskSpace) {
+        setDiskSpace(statusQueryData.diskSpace);
+      }
     }
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [isOpen]);
+  }, [statusQueryData]);
 
-  const currentMedia = details || activeMedia;
+  const currentMedia = fetchedDetails || details || activeMedia;
   const backdropUrl = currentMedia
     ? getImageUrl(
         currentMedia.backdropPath || currentMedia.posterPath,
@@ -320,15 +302,26 @@ export function MediaDetailModal() {
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.2 }}
-                    className="w-full h-full"
+                    className="relative w-full h-full"
                   >
                     <iframe
-                      src={`https://www.youtube-nocookie.com/embed/${details.trailerKey}?autoplay=1&rel=0&modestbranding=1`}
+                      src={`https://www.youtube.com/embed/${details.trailerKey}?autoplay=1&rel=0&playsinline=1&enablejsapi=1`}
                       title={`${currentMedia.title} Trailer`}
-                      className="w-full h-full border-0"
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      className="w-full h-full border-0 bg-black"
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      referrerPolicy="strict-origin-when-cross-origin"
                       allowFullScreen
                     />
+                    <a
+                      href={`https://www.youtube.com/watch?v=${details.trailerKey}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/80 hover:bg-[#E50914] text-white text-[11px] font-medium backdrop-blur-md border border-white/20 transition-all shadow-lg active:scale-95"
+                      title="Apri direttamente su YouTube"
+                    >
+                      <Play className="w-3 h-3 fill-current" />
+                      <span>Apri su YouTube</span>
+                    </a>
                   </motion.div>
                 ) : (
                   <motion.div
@@ -375,11 +368,25 @@ export function MediaDetailModal() {
                       <div className="flex flex-wrap items-center gap-3 pt-1">
                         {/* Trailer Trigger */}
                         <button
-                          onClick={() => setShowTrailer(true)}
-                          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-xs sm:text-sm hover:bg-neutral-100 transition-all active:scale-95 shadow-md"
+                          onClick={() => {
+                            if (!details?.trailerKey) return;
+                            setShowTrailer(true);
+                          }}
+                          disabled={isLoadingDetails || !details?.trailerKey}
+                          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black font-semibold text-xs sm:text-sm hover:bg-neutral-100 transition-all active:scale-95 shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
                         >
-                          <Play className="w-4 h-4 fill-current" />
-                          <span>{showTrailer ? "Riproduci" : "Guarda Trailer"}</span>
+                          {isLoadingDetails ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-black" />
+                          ) : (
+                            <Play className="w-4 h-4 fill-current" />
+                          )}
+                          <span>
+                            {isLoadingDetails
+                              ? "Caricamento trailer..."
+                              : !details?.trailerKey
+                              ? "Trailer non disponibile"
+                              : "Guarda Trailer"}
+                          </span>
                         </button>
                       </div>
                     </div>

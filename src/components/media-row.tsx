@@ -10,13 +10,15 @@ interface MediaRowProps {
   items: MediaItem[];
   isLarge?: boolean;
   hideDownload?: boolean;
+  priorityCount?: number;
 }
 
-export function MediaRow({
+function MediaRowComponent({
   title,
   items,
   isLarge = false,
   hideDownload = false,
+  priorityCount = 0,
 }: MediaRowProps) {
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -76,12 +78,14 @@ export function MediaRow({
           ref={rowRef}
           className="carousel-track flex items-center gap-3 sm:gap-4 overflow-x-auto hide-scrollbar px-4 sm:px-6 lg:px-8 py-3"
         >
-          {items.map((item) => (
+          {items.map((item, index) => (
             <MediaCard
               key={`${item.mediaType || "media"}-${item.id}`}
               media={item}
               isLarge={isLarge}
               hideDownload={hideDownload}
+              priority={priorityCount > 0 && index < priorityCount}
+              loading={priorityCount > 0 && index < priorityCount ? "eager" : "lazy"}
             />
           ))}
         </div>
@@ -117,3 +121,5 @@ export function MediaRow({
     </div>
   );
 }
+
+export const MediaRow = React.memo(MediaRowComponent);

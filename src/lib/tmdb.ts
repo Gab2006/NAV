@@ -292,15 +292,46 @@ export async function getMediaDetails(
 
   try {
     const res = await fetch(
-      `${TMDB_BASE_URL}/${type}/${id}?api_key=${apiKey}&language=it-IT&append_to_response=videos,credits`,
+      `${TMDB_BASE_URL}/${type}/${id}?api_key=${apiKey}&language=it-IT&include_video_language=it,en,null&append_to_response=videos,credits`,
       { next: { revalidate: 3600 } }
     );
     if (!res.ok) throw new Error("Failed to fetch detail");
     const data = await res.json();
 
-    const trailer = data.videos?.results?.find(
-      (v: any) => v.site === "YouTube" && (v.type === "Trailer" || v.type === "Teaser")
-    ) || data.videos?.results?.[0];
+    let videoResults = data.videos?.results || [];
+
+    // Fallback per serie TV: se i video di primo livello sono assenti, cerca nella stagione 1
+    if (type === "tv" && videoResults.length === 0) {
+      try {
+        const seasonRes = await fetch(
+          `${TMDB_BASE_URL}/tv/${id}/season/1?api_key=${apiKey}&language=it-IT&include_video_language=it,en,null&append_to_response=videos`,
+          { next: { revalidate: 3600 } }
+        );
+        if (seasonRes.ok) {
+          const seasonData = await seasonRes.json();
+          if (seasonData.videos?.results?.length > 0) {
+            videoResults = seasonData.videos.results;
+          }
+        }
+      } catch {}
+    }
+
+    const youtubeVideos = (videoResults || []).filter(
+      (v: any) => v.site === "YouTube" && v.key
+    );
+
+    const trailer =
+      youtubeVideos.find((v: any) => v.iso_639_1 === "it" && v.type === "Trailer" && v.official) ||
+      youtubeVideos.find((v: any) => v.iso_639_1 === "it" && v.type === "Trailer") ||
+      youtubeVideos.find((v: any) => v.iso_639_1 === "it" && (v.type === "Teaser" || v.type === "Clip")) ||
+      youtubeVideos.find((v: any) => v.iso_639_1 === "en" && v.type === "Trailer" && v.official) ||
+      youtubeVideos.find((v: any) => v.type === "Trailer" && v.official) ||
+      youtubeVideos.find((v: any) => v.type === "Trailer") ||
+      youtubeVideos.find((v: any) => v.type === "Teaser" && v.official) ||
+      youtubeVideos.find((v: any) => v.type === "Teaser") ||
+      youtubeVideos.find((v: any) => v.type === "Clip" && v.official) ||
+      youtubeVideos[0] ||
+      null;
 
     const cast = (data.credits?.cast || []).slice(0, 8).map((c: any) => ({
       id: c.id,

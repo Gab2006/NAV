@@ -13,14 +13,18 @@ interface MediaCardProps {
   className?: string;
   imageSize?: TmdbImageSize;
   hideDownload?: boolean;
+  priority?: boolean;
+  loading?: "lazy" | "eager";
 }
 
-export function MediaCard({
+function MediaCardComponent({
   media,
   isLarge = false,
   className = "",
   imageSize,
   hideDownload = false,
+  priority = false,
+  loading = "lazy",
 }: MediaCardProps) {
   const { openModal } = useMediaModal();
   const [downloading, setDownloading] = useState(false);
@@ -117,7 +121,8 @@ export function MediaCard({
           title={media.title}
           mediaType={media.mediaType}
           fill
-          loading="lazy"
+          priority={priority}
+          loading={priority ? undefined : loading}
           sizes={
             isLarge
               ? "(max-width: 640px) 160px, (max-width: 1024px) 220px, 300px"
@@ -305,3 +310,5 @@ export function MediaCard({
     </div>
   );
 }
+
+export const MediaCard = React.memo(MediaCardComponent);

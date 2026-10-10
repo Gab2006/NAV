@@ -53,8 +53,12 @@ export default function RootLayout({
     <html
       lang="it"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col bg-[#0c0d10] text-[#f2f2f5] selection:bg-[#E50914] selection:text-white">
+      <body
+        className="min-h-full flex flex-col bg-[#0c0d10] text-[#f2f2f5] selection:bg-[#E50914] selection:text-white"
+        suppressHydrationWarning
+      >
         <QueryProvider>
           <MediaModalProvider>
             {/* Top Notch / Status Bar Safe-Area Shield */}

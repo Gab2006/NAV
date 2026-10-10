@@ -16,13 +16,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NetStream • Cinema & Serie TV",
+  title: "Nav. • Cinema & Serie TV",
   description: "Piattaforma personale cinematografica per esplorare film e serie TV e gestire i download.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "NetStream",
+    title: "Nav.",
   },
   icons: {
     icon: [

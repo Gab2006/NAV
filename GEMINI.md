@@ -1,4 +1,4 @@
-# NetStream • Linee Guida di Progetto & Regole di Sviluppo
+# Nav. • Linee Guida di Progetto & Regole di Sviluppo
 
 ## 1. Regole Tassative per l'Assistente AI (Chat & Interazione)
 - **DIVIETO ASSOLUTO DI CODICE IN CHAT**: Non mostrare **MAI E POI MAI** blocchi di codice scritto, modificato o intere porzioni di file all'interno dei messaggi di risposta nella chat. Modifica e crea direttamente i file sul filesystem tramite gli appositi strumenti.
@@ -8,7 +8,7 @@
 ---
 
 ## 2. Panoramica del Progetto & Architettura
-- **Identità**: **NetStream** – Frontend cinematografico stile Netflix / VersePal per l'esplorazione multimediale e la gestione automatica dei download su NAS personale (Radarr e Sonarr) tramite API TMDb.
+- **Identità**: **Nav.** – Frontend cinematografico stile Netflix / VersePal per l'esplorazione multimediale e la gestione automatica dei download su NAS personale (Radarr e Sonarr) tramite API TMDb.
 - **Framework**: Next.js 16 (App Router) con React 19 e TypeScript.
 - **Server & Network**:
   - Dev server configurato per rete locale (`0.0.0.0:3000` con `allowedDevOrigins` in `next.config.ts`).

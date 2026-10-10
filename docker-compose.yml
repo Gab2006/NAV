@@ -1,11 +1,11 @@
 services:
-  netstream:
+  nav:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_TMDB_API_KEY: ${NEXT_PUBLIC_TMDB_API_KEY}
-    container_name: netstream
+    container_name: nav
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"

@@ -1,6 +1,6 @@
 {
-  "name": "NetStream - NAS Media Hub",
-  "short_name": "NetStream",
+  "name": "Nav. - NAS Media Hub",
+  "short_name": "Nav.",
   "description": "Frontend cinematografico personale per sfogliare e gestire download su NAS (Radarr & Sonarr)",
   "start_url": "/",
   "display": "standalone",

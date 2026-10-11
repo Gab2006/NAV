@@ -111,4 +111,8 @@ export interface IndexerLookupResult {
   releases: IndexerRelease[];
   nasConfigured: boolean;
   error?: string;
+  reason?: string;
+  mediaStatus?: "inCinemas" | "announced" | "released" | "upcoming" | "missing" | "available" | "downloading";
+  releaseDate?: string;
 }
+

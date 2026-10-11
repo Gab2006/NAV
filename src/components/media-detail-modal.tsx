@@ -731,12 +731,14 @@ export function MediaDetailModal() {
                 {indexerResult && downloadStatus !== "available" && (
                   <div
                     className={`rounded-xl border px-3.5 py-2 text-xs flex items-center gap-2 transition-all ${
-                      indexerResult.error && !indexerResult.nasConfigured
+                      !indexerResult.nasConfigured
                         ? "border-white/10 bg-white/5 text-neutral-400"
-                        : indexerResult.error
-                        ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
                         : indexerResult.available
                         ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.12)]"
+                        : indexerResult.mediaStatus === "inCinemas" ||
+                          indexerResult.mediaStatus === "announced" ||
+                          indexerResult.mediaStatus === "upcoming"
+                        ? "border-amber-500/20 bg-amber-500/10 text-amber-300"
                         : "border-red-500/20 bg-red-500/10 text-red-300"
                     }`}
                   >
@@ -745,20 +747,22 @@ export function MediaDetailModal() {
                         <AlertCircle className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
                         <span>NAS non configurato</span>
                       </>
-                    ) : indexerResult.error ? (
-                      <>
-                        <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span>{indexerResult.error}</span>
-                      </>
                     ) : indexerResult.available ? (
                       <>
                         <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         <span className="font-medium">File disponibile per il download</span>
                       </>
+                    ) : indexerResult.mediaStatus === "inCinemas" ||
+                      indexerResult.mediaStatus === "announced" ||
+                      indexerResult.mediaStatus === "upcoming" ? (
+                      <>
+                        <Clock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span>{indexerResult.reason || indexerResult.error || "Attualmente non disponibile"}</span>
+                      </>
                     ) : (
                       <>
                         <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
-                        <span>Nessun file disponibile per il download</span>
+                        <span>{indexerResult.reason || indexerResult.error || "Nessun file disponibile per il download"}</span>
                       </>
                     )}
                   </div>

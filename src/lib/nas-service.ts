@@ -134,8 +134,8 @@ export async function checkMediaExistsOnNas(
         if (queueRes.ok) {
           const queue = await queueRes.json();
           const records = queue.records || queue;
-          if (Array.isArray(records) && records.length > 0) {
-            const record = records[0];
+          const record = records.find((r: any) => r.movieId === movie.id) || (records.length === 1 && records[0].movieId === movie.id ? records[0] : null);
+          if (record) {
             const sizeleft = record.sizeleft ?? 0;
             const size = record.size ?? 0;
             downloadProgress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
@@ -208,8 +208,8 @@ export async function checkMediaExistsOnNas(
         if (queueRes.ok) {
           const queue = await queueRes.json();
           const records = queue.records || queue;
-          if (Array.isArray(records) && records.length > 0) {
-            const record = records[0];
+          const record = records.find((r: any) => r.seriesId === series.id) || (records.length === 1 && records[0].seriesId === series.id ? records[0] : null);
+          if (record) {
             const sizeleft = record.sizeleft ?? 0;
             const size = record.size ?? 0;
             downloadProgress = size > 0 ? Math.round(((size - sizeleft) / size) * 100) : 5;
@@ -453,12 +453,16 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
 
             const downloadProgress = hasFile ? 100 : inQueue?.progress ?? 0;
 
-            const poster =
+            const rawPoster =
               m.images?.find((img: any) => img.coverType === "poster")?.remoteUrl ||
               m.images?.find((img: any) => img.coverType === "poster")?.url;
-            const backdrop =
+            const rawBackdrop =
               m.images?.find((img: any) => img.coverType === "fanart")?.remoteUrl ||
               m.images?.find((img: any) => img.coverType === "fanart")?.url;
+
+            // TMDb /original/ spesso causa timeout di proxy nell'image optimizer di Next.js: usa formati scalati (w780 / w1280)
+            const poster = typeof rawPoster === "string" ? rawPoster.replace("/t/p/original/", "/t/p/w780/") : rawPoster;
+            const backdrop = typeof rawBackdrop === "string" ? rawBackdrop.replace("/t/p/original/", "/t/p/w1280/") : rawBackdrop;
 
             let overview = m.overview;
             if (!overview) {
@@ -569,12 +573,15 @@ export async function getNasLibraryMedia(): Promise<MediaItem[]> {
               ? (totalEpisodeCount > 0 ? Math.round((episodeFileCount / totalEpisodeCount) * 100) : 100)
               : inQueue?.progress ?? 0;
 
-            const poster =
+            const rawPoster =
               s.images?.find((img: any) => img.coverType === "poster")?.remoteUrl ||
               s.images?.find((img: any) => img.coverType === "poster")?.url;
-            const backdrop =
+            const rawBackdrop =
               s.images?.find((img: any) => img.coverType === "fanart")?.remoteUrl ||
               s.images?.find((img: any) => img.coverType === "fanart")?.url;
+
+            const poster = typeof rawPoster === "string" ? rawPoster.replace("/t/p/original/", "/t/p/w780/") : rawPoster;
+            const backdrop = typeof rawBackdrop === "string" ? rawBackdrop.replace("/t/p/original/", "/t/p/w1280/") : rawBackdrop;
 
             let overview = s.overview;
             if (!overview) {
@@ -705,7 +712,33 @@ export async function deleteMediaFromNas(
         }
 
         if (movieId) {
-          // Elimina da Radarr e cancella fisicamente i file dal disco NAS
+          // Se ci sono download attivi in coda (es. torrent su qBittorrent), cancellali dal download client
+          try {
+            const qRes = await fetch(`${targetUrl}/api/v3/queue`, {
+              headers: { 'X-Api-Key': apiKey },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (qRes.ok) {
+              const qData = await qRes.json();
+              const records = Array.isArray(qData) ? qData : qData.records || [];
+              for (const r of records) {
+                if (r.movieId === movieId || r.movieId === tmdbId) {
+                  await fetch(
+                    `${targetUrl}/api/v3/queue/${r.id}?removeFromClient=true&blocklist=false`,
+                    {
+                      method: 'DELETE',
+                      headers: { 'X-Api-Key': apiKey },
+                      signal: AbortSignal.timeout(4000),
+                    }
+                  ).catch(() => {});
+                }
+              }
+            }
+          } catch {
+            // Coda non bloccante per l'eliminazione
+          }
+
+          // Elimina da Radarr e cancella fisicamente eventuali file dal disco NAS
           const deleteRes = await fetch(
             `${targetUrl}/api/v3/movie/${movieId}?deleteFiles=true&addImportExclusion=false`,
             {
@@ -740,6 +773,32 @@ export async function deleteMediaFromNas(
         }
 
         if (seriesId) {
+          // Se ci sono episodi in download attivo in coda, cancellali dal download client
+          try {
+            const qRes = await fetch(`${targetUrl}/api/v3/queue`, {
+              headers: { 'X-Api-Key': apiKey },
+              signal: AbortSignal.timeout(3000),
+            });
+            if (qRes.ok) {
+              const qData = await qRes.json();
+              const records = Array.isArray(qData) ? qData : qData.records || [];
+              for (const r of records) {
+                if (r.seriesId === seriesId || r.seriesId === tmdbId) {
+                  await fetch(
+                    `${targetUrl}/api/v3/queue/${r.id}?removeFromClient=true&blocklist=false`,
+                    {
+                      method: 'DELETE',
+                      headers: { 'X-Api-Key': apiKey },
+                      signal: AbortSignal.timeout(4000),
+                    }
+                  ).catch(() => {});
+                }
+              }
+            }
+          } catch {
+            // Coda non bloccante
+          }
+
           // Elimina da Sonarr e cancella fisicamente i file della serie dal disco NAS
           const deleteRes = await fetch(
             `${targetUrl}/api/v3/series/${seriesId}?deleteFiles=true&addImportListExclusion=false`,

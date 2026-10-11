@@ -39,10 +39,12 @@ function MediaCardComponent({
     ? new Date(media.releaseDate).getFullYear()
     : "";
 
+  const downloadProgress = Math.round(media.downloadProgress ?? 0);
   const isAvailable =
     media.downloadStatus === "available" ||
-    (!media.downloadStatus && media.downloadProgress === 100);
-  const isActivelyDownloading = media.downloadStatus === "downloading";
+    (!media.downloadStatus && downloadProgress >= 100);
+  const isActivelyDownloading =
+    media.downloadStatus === "downloading" && !isAvailable && downloadProgress < 100;
   const isQueued = media.downloadStatus === "queued";
   const isMissing = media.downloadStatus === "missing";
   const isNotAvailable = media.downloadStatus === "not_available";
@@ -50,11 +52,12 @@ function MediaCardComponent({
 
   // Item is on NAS / tracked but not downloaded/available yet
   const isNotDownloaded =
-    isActivelyDownloading ||
-    isQueued ||
-    isMissing ||
-    isNotAvailable ||
-    isUnmonitored;
+    !isAvailable &&
+    (isActivelyDownloading ||
+      isQueued ||
+      isMissing ||
+      isNotAvailable ||
+      isUnmonitored);
 
   // Don't show redundant download trigger if already available or actively in download
   const isDownloaded =
@@ -140,17 +143,19 @@ function MediaCardComponent({
         {isNotDownloaded && (
           <div className="absolute top-2 left-2 sm:top-2.5 sm:left-2.5 z-20 pointer-events-none flex items-center gap-1.5 max-w-[calc(100%-16px)]">
             {isActivelyDownloading ? (
-              <>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/80 backdrop-blur-md border border-blue-500/40 text-[8.5px] sm:text-[9.5px] font-semibold text-blue-200 shadow-md whitespace-nowrap">
-                  <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-400 shrink-0" />
-                  <span>In download</span>
+              <div
+                className="relative inline-flex items-center justify-center overflow-hidden rounded-full bg-transparent border border-neutral-600 shadow-md min-w-[36px]"
+                title={`Download: ${downloadProgress}%`}
+              >
+                {/* Sfondo progressivo da sinistra a destra con rosso navbar (#E50914) */}
+                <div
+                  className="absolute inset-y-0 left-0 bg-[#E50914] transition-[width] duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, downloadProgress))}%` }}
+                />
+                <span className="relative z-10 px-2 py-0.5 text-[9px] sm:text-[10px] font-bold text-white tracking-wider tabular-nums leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                  {downloadProgress}%
                 </span>
-                {typeof media.downloadProgress === "number" && media.downloadProgress > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-md bg-black/80 backdrop-blur-md border border-blue-500/30 text-[8.5px] sm:text-[9.5px] font-bold text-blue-300 shadow-md whitespace-nowrap">
-                    {media.downloadProgress}%
-                  </span>
-                )}
-              </>
+              </div>
             ) : isQueued ? (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/80 backdrop-blur-md border border-amber-500/40 text-[8.5px] sm:text-[9.5px] font-semibold text-amber-200 shadow-md whitespace-nowrap">
                 <Clock className="w-2.5 h-2.5 text-amber-400 shrink-0" />
@@ -167,41 +172,24 @@ function MediaCardComponent({
           </div>
         )}
 
-        {/* Active download progress bar */}
-        {isActivelyDownloading && (
-          <div className="absolute bottom-11 left-3 right-3 z-20 space-y-1 pointer-events-none">
-            <div className="flex items-center justify-between text-[9px] font-medium text-neutral-300">
-              <span className="text-neutral-400">Download in corso</span>
-              <span className="text-blue-300 font-mono">{media.downloadProgress}%</span>
-            </div>
-            <div className="w-full h-1 bg-black/60 rounded-full overflow-hidden border border-white/10">
-              <div
-                className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.max(5, media.downloadProgress || 5)}%`,
-                }}
-              />
-            </div>
-          </div>
-        )}
-
         {/* Title overlay at bottom for standard view */}
         <div className="absolute bottom-2.5 left-3 right-3 z-20">
           <p className="text-white font-semibold text-xs sm:text-sm truncate">
             {media.title}
           </p>
           <div className="flex items-center gap-2 mt-0.5 text-[10px] sm:text-xs text-neutral-400">
-            {isActivelyDownloading ? (
-              <span className="text-blue-400/90 font-medium">Download in corso...</span>
-            ) : isQueued ? (
-              <span className="text-amber-400/90 font-medium">In coda</span>
-            ) : (
+            {media.voteAverage > 0 && (
               <span className="flex items-center text-amber-300 font-medium gap-1">
                 <Star className="w-3 h-3 fill-current text-amber-400" />
                 {media.voteAverage.toFixed(1)}
               </span>
             )}
-            {releaseYear && <span>• {releaseYear}</span>}
+            {releaseYear && (
+              <span>
+                {media.voteAverage > 0 ? "• " : ""}
+                {releaseYear}
+              </span>
+            )}
           </div>
         </div>
 
@@ -213,9 +201,8 @@ function MediaCardComponent({
               {media.mediaType === "tv" ? "Serie" : "Film"}
             </span>
             {isActivelyDownloading ? (
-              <span className="px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 flex items-center gap-1">
-                <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                <span>In download</span>
+              <span className="px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider rounded-full bg-[#E50914]/20 border border-[#E50914]/40 text-[#E50914]">
+                {downloadProgress}%
               </span>
             ) : isQueued ? (
               <span className="px-2 py-0.5 text-[9px] sm:text-[10px] font-semibold tracking-wider uppercase rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 flex items-center gap-1">
@@ -240,13 +227,7 @@ function MediaCardComponent({
               {media.title}
             </h4>
             <p className="text-[10px] sm:text-xs text-neutral-400 line-clamp-2 sm:line-clamp-3 mt-1 sm:mt-1.5 leading-snug">
-              {isActivelyDownloading
-                ? "Il contenuto è attualmente in fase di download sul server NAS."
-                : isQueued
-                ? "In coda di download sul server NAS."
-                : isNotDownloaded
-                ? "Contenuto attualmente non disponibile per la riproduzione sul server NAS."
-                : media.overview}
+              {media.overview || (isNotDownloaded ? "Contenuto monitorato sul server NAS." : "")}
             </p>
           </div>
 

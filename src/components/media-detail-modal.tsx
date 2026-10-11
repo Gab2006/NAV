@@ -21,12 +21,13 @@ import {
   Tv,
   X,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Image from "next/image";
 import React, { useEffect, useState } from "react";
 import { MediaImage } from "./media-image";
 
 export function MediaDetailModal() {
+  const queryClient = useQueryClient();
   const { selectedMedia, isOpen, closeModal } = useMediaModal();
   const [showTrailer, setShowTrailer] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState<DownloadStatus>("unrequested");
@@ -47,6 +48,16 @@ export function MediaDetailModal() {
     if (selectedMedia) {
       setCachedMedia(selectedMedia);
       setIndexerResult(null);
+      if (selectedMedia.downloadStatus) {
+        setDownloadStatus(selectedMedia.downloadStatus);
+      } else {
+        setDownloadStatus("unrequested");
+      }
+      if (typeof selectedMedia.downloadProgress === "number") {
+        setDownloadProgress(selectedMedia.downloadProgress);
+      } else {
+        setDownloadProgress(0);
+      }
     }
   }, [selectedMedia]);
 
@@ -111,7 +122,11 @@ export function MediaDetailModal() {
       return res.json();
     },
     enabled: Boolean(isOpen && mediaId),
-    staleTime: 1000 * 15,
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return s === "downloading" || s === "queued" ? 2500 : false;
+    },
+    staleTime: 1000 * 5,
   });
 
   const isCheckingStatus = isCheckingStatusQuery;
@@ -121,6 +136,11 @@ export function MediaDetailModal() {
       if (statusQueryData.status) {
         setDownloadStatus(statusQueryData.status);
         setDownloadProgress(statusQueryData.progress || 0);
+        if (statusQueryData.status === "available") {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("nas-media-updated"));
+          }
+        }
       }
       if (statusQueryData.diskSpace) {
         setDiskSpace(statusQueryData.diskSpace);
@@ -218,8 +238,23 @@ export function MediaDetailModal() {
 
       if (res.ok && data.success) {
         setShowDeleteConfirm(false);
+        const wasDownloading = downloadStatus === "downloading" || downloadStatus === "queued";
         setDownloadStatus("unrequested");
         setDownloadProgress(0);
+        if (cachedMedia) {
+          cachedMedia.downloadStatus = "unrequested";
+          cachedMedia.downloadProgress = 0;
+        }
+        if (selectedMedia) {
+          selectedMedia.downloadStatus = "unrequested";
+          selectedMedia.downloadProgress = 0;
+        }
+
+        // Resetta lo stato in cache React Query
+        queryClient.setQueryData(["media-status", mediaId, mediaType], null);
+        queryClient.invalidateQueries({ queryKey: ["media-status", mediaId, mediaType] });
+        queryClient.invalidateQueries({ queryKey: ["category-media"] });
+
         // Aggiorna lo spazio disco NAS in tempo reale
         fetch("/api/media/diskspace")
           .then((r) => r.json())
@@ -227,11 +262,12 @@ export function MediaDetailModal() {
             if (ds && !ds.error) setDiskSpace(ds);
           })
           .catch(() => {});
+
         // Notifica l'applicazione che i media NAS sono cambiati
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("nas-media-updated"));
         }
-        alert("Titolo e file eliminati con successo dal NAS.");
+        alert(wasDownloading ? "Download annullato e titolo rimosso dal NAS." : "Titolo e file eliminati con successo dal NAS.");
       } else {
         alert(data.error || "Errore durante l'eliminazione dal NAS.");
       }
@@ -557,17 +593,12 @@ export function MediaDetailModal() {
               </div>
 
               {/* Stato sintetico NAS – solo icona + testo, niente box */}
-              {downloadStatus !== "unrequested" && (
+              {downloadStatus !== "unrequested" && downloadStatus !== "downloading" && (
                 <div className="flex justify-end">
                   {downloadStatus === "available" ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-400 whitespace-nowrap">
                       <Check className="w-3.5 h-3.5 shrink-0" />
                       Disponibile su NAS
-                    </span>
-                  ) : downloadStatus === "downloading" ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-400 whitespace-nowrap">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      In download ({downloadProgress}%)
                     </span>
                   ) : downloadStatus === "queued" ? (
                     <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 whitespace-nowrap">
@@ -629,46 +660,41 @@ export function MediaDetailModal() {
                       )}
                     </button>
 
-                    {/* Tasto Download circolare compatto */}
-                    <button
-                      onClick={handleStartDownload}
-                      disabled={
-                        isRequestingDownload ||
-                        isCheckingIndexers ||
-                        downloadStatus === "downloading" ||
-                        downloadStatus === "queued" ||
-                        isDownloadUnavailable
-                      }
-                      title={
-                        downloadStatus === "downloading"
-                          ? "Download in corso"
-                          : downloadStatus === "queued"
-                          ? "In attesa di download"
-                          : isDownloadUnavailable
-                          ? "Nessun file disponibile per il download"
-                          : "Scarica"
-                      }
-                      aria-label="Scarica"
-                      className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all border ${
-                        downloadStatus === "downloading"
-                          ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
-                          : downloadStatus === "queued"
-                          ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
-                          : isDownloadUnavailable
-                          ? "bg-white/5 text-neutral-600 border-white/10 cursor-not-allowed opacity-40 shadow-none"
-                          : "bg-[#E50914] hover:bg-[#f21823] text-white border-transparent shadow-[0_0_12px_rgba(229,9,20,0.35)] active:scale-95 disabled:opacity-50"
-                      }`}
-                    >
-                      {isRequestingDownload ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : downloadStatus === "downloading" ? (
-                        <RefreshCw className="w-4 h-4 animate-spin text-blue-400" />
-                      ) : downloadStatus === "queued" ? (
-                        <RefreshCw className="w-4 h-4 text-amber-400" />
-                      ) : (
-                        <Download className="w-4 h-4" />
-                      )}
-                    </button>
+                    {/* Tasto Download circolare compatto (nascosto se già in download) */}
+                    {downloadStatus !== "downloading" && (
+                      <button
+                        onClick={handleStartDownload}
+                        disabled={
+                          isRequestingDownload ||
+                          isCheckingIndexers ||
+                          downloadStatus === "queued" ||
+                          isDownloadUnavailable
+                        }
+                        title={
+                          downloadStatus === "queued"
+                            ? "In attesa di download"
+                            : isDownloadUnavailable
+                            ? "Nessun file disponibile per il download"
+                            : "Scarica"
+                        }
+                        aria-label="Scarica"
+                        className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all border ${
+                          downloadStatus === "queued"
+                            ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
+                            : isDownloadUnavailable
+                            ? "bg-white/5 text-neutral-600 border-white/10 cursor-not-allowed opacity-40 shadow-none"
+                            : "bg-[#E50914] hover:bg-[#f21823] text-white border-transparent shadow-[0_0_12px_rgba(229,9,20,0.35)] active:scale-95 disabled:opacity-50"
+                        }`}
+                      >
+                        {isRequestingDownload ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : downloadStatus === "queued" ? (
+                          <RefreshCw className="w-4 h-4 text-amber-400" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
+                      </button>
+                    )}
 
                     {/* Bottone elimina anche per contenuti già tracciati su Radarr/Sonarr */}
                     {downloadStatus !== "unrequested" && (
@@ -687,15 +713,15 @@ export function MediaDetailModal() {
 
                 {/* Avanzamento download se attivo */}
                 {downloadStatus === "downloading" && (
-                  <div className="space-y-1 pt-1">
-                    <div className="flex justify-between text-[10px] text-neutral-400">
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex justify-between text-[11px] text-neutral-400">
                       <span>Avanzamento download</span>
-                      <span className="text-white font-mono">{downloadProgress}%</span>
+                      <span className="text-white font-mono font-semibold">{downloadProgress}%</span>
                     </div>
                     <div className="w-full h-1.5 bg-neutral-800 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-blue-500 transition-all duration-500"
-                        style={{ width: `${downloadProgress}%` }}
+                        className="h-full bg-[#E50914] transition-all duration-300"
+                        style={{ width: `${Math.min(100, Math.max(0, downloadProgress))}%` }}
                       />
                     </div>
                   </div>
@@ -768,11 +794,18 @@ export function MediaDetailModal() {
 
               <div className="space-y-1.5">
                 <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
-                  Eliminare dal NAS?
+                  {downloadStatus === "downloading" ? "Annullare download?" : "Eliminare dal NAS?"}
                 </h3>
                 <p className="text-xs text-neutral-400 leading-relaxed">
-                  Sei sicuro di voler eliminare <span className="text-white font-medium">&quot;{currentMedia.title}&quot;</span>?
-                  Il titolo verrà rimosso da {currentMedia.mediaType === "movie" ? "Radarr" : "Sonarr"} e tutti i file video verranno cancellati definitivamente dallo storage del NAS.
+                  {downloadStatus === "downloading" ? (
+                    <>
+                      Vuoi interrompere il download di <span className="text-white font-medium">&quot;{currentMedia.title}&quot;</span>? Il trasferimento verrà annullato nel server e i file parziali rimossi.
+                    </>
+                  ) : (
+                    <>
+                      Sei sicuro di voler eliminare <span className="text-white font-medium">&quot;{currentMedia.title}&quot;</span>? Il titolo verrà rimosso da {currentMedia.mediaType === "movie" ? "Radarr" : "Sonarr"} e tutti i file video verranno cancellati definitivamente dallo storage del NAS.
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -792,12 +825,12 @@ export function MediaDetailModal() {
                   {isDeleting ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Eliminazione...</span>
+                      <span>{downloadStatus === "downloading" ? "Annullamento..." : "Eliminazione..."}</span>
                     </>
                   ) : (
                     <>
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>Elimina</span>
+                      <span>{downloadStatus === "downloading" ? "Annulla download" : "Elimina"}</span>
                     </>
                   )}
                 </button>

@@ -95,6 +95,7 @@ export function MediaImage({
         loading={priority ? undefined : loading}
         decoding="async"
         sizes={effectiveSizes}
+        unoptimized={typeof src === "string" && src.includes("/original/")}
         className={`${className} transition-opacity duration-300 ${
           isLoading ? "opacity-0" : "opacity-100"
         }`}

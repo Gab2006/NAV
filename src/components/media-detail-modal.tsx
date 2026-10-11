@@ -348,16 +348,6 @@ export function MediaDetailModal() {
                       referrerPolicy="strict-origin-when-cross-origin"
                       allowFullScreen
                     />
-                    <a
-                      href={`https://www.youtube.com/watch?v=${details.trailerKey}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="absolute bottom-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/80 hover:bg-[#E50914] text-white text-[11px] font-medium backdrop-blur-md border border-white/20 transition-all shadow-lg active:scale-95"
-                      title="Apri direttamente su YouTube"
-                    >
-                      <Play className="w-3 h-3 fill-current" />
-                      <span>Apri su YouTube</span>
-                    </a>
                   </motion.div>
                 ) : (
                   <motion.div

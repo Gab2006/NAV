@@ -68,88 +68,346 @@ export async function GET(req: NextRequest) {
   }
 }
 
-export async function POST(req: Request) {
-  try {
-    const { id, tmdbId, type, title, year } = await req.json();
+async function prowlarrFindBestItalianRelease(
+  query: string,
+  category: string,
+  year?: number | string,
+  originalTitle?: string
+): Promise<any | null> {
+  const prowlarrUrl = process.env.PROWLARR_URL;
+  const prowlarrApiKey = process.env.PROWLARR_API_KEY;
+  if (!prowlarrUrl || !prowlarrApiKey) return null;
 
-    if (type === 'movie') {
-      // 1. Invio comando a Radarr per i Film
-      const res = await fetch(`${process.env.RADARR_URL}/api/v3/movie`, {
-        method: 'POST',
-        headers: {
-          'X-Api-Key': process.env.RADARR_API_KEY!,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: title,
-          tmdbId: tmdbId || id,
-          year: year,
-          qualityProfileId: 1, // Profilo predefinito
-          rootFolderPath: '/media/Film', // Cartella montata nel container
-          monitored: true,
-          addOptions: {
-            searchForMovie: true, // Avvia subito la ricerca e il download torrent!
-          },
-        }),
-      });
+  const queries = new Set<string>();
+  const cleanQ = query.replace(/[:\/]/g, " ").trim();
+  if (year) queries.add(`${cleanQ} ${year}`);
+  queries.add(cleanQ);
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        const errorMessage = Array.isArray(errorData)
-          ? errorData.map((e: any) => e.errorMessage || e.message).join(', ')
-          : (errorData?.message || errorData?.errorMessage || JSON.stringify(errorData) || 'Errore durante la richiesta al server');
-        return NextResponse.json({ error: errorMessage }, { status: res.status });
-      }
+  if (originalTitle && originalTitle.toLowerCase() !== query.toLowerCase()) {
+    const cleanOrig = originalTitle.replace(/[:\/]/g, " ").trim();
+    if (year) queries.add(`${cleanOrig} ${year}`);
+    queries.add(cleanOrig);
+  }
 
-      return NextResponse.json({ success: true, message: 'Film aggiunto e download avviato!' });
+  const collected: any[] = [];
+  const seen = new Set<string>();
 
-    } else if (type === 'tv') {
-      // 2. Prima cerchiamo la serie su Sonarr tramite TVDb/TMDb per ottenere i dati necessari
-      const lookupRes = await fetch(
-        `${process.env.SONARR_URL}/api/v3/series/lookup?term=${encodeURIComponent(title)}`,
+  for (const q of queries) {
+    try {
+      const res = await fetch(
+        `${prowlarrUrl}/api/v1/search?query=${encodeURIComponent(q)}&categories=${category}&type=search`,
         {
-          headers: { 'X-Api-Key': process.env.SONARR_API_KEY! },
+          headers: { "X-Api-Key": prowlarrApiKey },
+          signal: AbortSignal.timeout(8000),
         }
       );
-      const seriesList = await lookupRes.json();
-      const seriesData = seriesList[0];
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          for (const item of data) {
+            const id = item.guid || item.downloadUrl || item.magnetUrl;
+            if (id && !seen.has(id)) {
+              seen.add(id);
+              collected.push(item);
+            }
+          }
+        }
+      }
+    } catch {}
+    if (collected.length >= 20) break;
+  }
 
-      if (!seriesData) {
-        return NextResponse.json({ error: 'Titolo non trovato nel catalogo' }, { status: 404 });
+  const isBootleg = (t: string) =>
+    /\b(cam|camrip|hdcam|ts|telesync|hdts|tc|telecine|dvdscr|scr|screener|workprint|r5|r6)\b/i.test(t);
+  const hasIta = (t: string) => /\b(ita|italian|italiano|sub[\s._-]*ita)\b/i.test(t);
+
+  const valid = collected.filter((r) => {
+    if (!r.title || isBootleg(r.title)) return false;
+    const seeders = r.seeders ?? r.seedCount ?? null;
+    if (seeders !== null && seeders <= 0) return false;
+    if (!hasIta(r.title)) return false;
+    return true;
+  });
+
+  if (valid.length === 0) return null;
+
+  valid.sort((a, b) => (b.seeders ?? 0) - (a.seeders ?? 0));
+  return valid[0];
+}
+
+export async function POST(req: Request) {
+  try {
+    const { id, tmdbId, type, title, originalTitle, year } = await req.json();
+    const effectiveTmdbId = tmdbId || id;
+    const isMovie = type === "movie";
+
+    if (isMovie) {
+      const radarrUrl = process.env.RADARR_URL;
+      const radarrApiKey = process.env.RADARR_API_KEY;
+
+      if (!radarrUrl || !radarrApiKey) {
+        return NextResponse.json({ error: "Radarr non configurato" }, { status: 503 });
       }
 
-      // 3. Invio comando a Sonarr per scaricare tutte le stagioni
-      const res = await fetch(`${process.env.SONARR_URL}/api/v3/series`, {
-        method: 'POST',
+      let radarrMovie: any = null;
+
+      // 1. Controlla se il film esiste già nella libreria Radarr
+      if (effectiveTmdbId) {
+        const checkRes = await fetch(`${radarrUrl}/api/v3/movie?tmdbId=${effectiveTmdbId}`, {
+          headers: { "X-Api-Key": radarrApiKey },
+        });
+        if (checkRes.ok) {
+          const list = await checkRes.json();
+          radarrMovie = Array.isArray(list) ? list[0] : list;
+        }
+      }
+
+      // 2. Se non esiste, lo aggiunge a Radarr
+      if (!radarrMovie || !radarrMovie.id) {
+        const addRes = await fetch(`${radarrUrl}/api/v3/movie`, {
+          method: "POST",
+          headers: {
+            "X-Api-Key": radarrApiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: originalTitle || title,
+            tmdbId: effectiveTmdbId,
+            year: year,
+            qualityProfileId: 1,
+            rootFolderPath: "/media/Film",
+            monitored: true,
+            addOptions: {
+              searchForMovie: true,
+            },
+          }),
+        });
+
+        if (addRes.ok) {
+          radarrMovie = await addRes.json();
+        } else {
+          // Se già presente su Radarr sotto altro id/lookup, recuperiamolo
+          const checkRes = await fetch(`${radarrUrl}/api/v3/movie?tmdbId=${effectiveTmdbId}`, {
+            headers: { "X-Api-Key": radarrApiKey },
+          });
+          if (checkRes.ok) {
+            const list = await checkRes.json();
+            radarrMovie = Array.isArray(list) ? list[0] : list;
+          }
+        }
+      }
+
+      if (!radarrMovie || !radarrMovie.id) {
+        return NextResponse.json(
+          { error: "Impossibile registrare o trovare il film su Radarr" },
+          { status: 500 }
+        );
+      }
+
+      // 3. Avvia la ricerca manuale su Radarr
+      await fetch(`${radarrUrl}/api/v3/command`, {
+        method: "POST",
         headers: {
-          'X-Api-Key': process.env.SONARR_API_KEY!,
-          'Content-Type': 'application/json',
+          "X-Api-Key": radarrApiKey,
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ...seriesData,
-          qualityProfileId: 1,
-          rootFolderPath: '/media/SerieTV',
-          monitored: true,
-          addOptions: {
-            searchForMissingEpisodes: true, // Scarica tutti gli episodi disponibili
-          },
+          name: "MoviesSearch",
+          movieIds: [radarrMovie.id],
         }),
+      }).catch(() => {});
+
+      // 4. Se dopo un istante la coda non ha ancora catturato una release, cerchiamo con Prowlarr ed effettuiamo il push
+      setTimeout(async () => {
+        try {
+          const qRes = await fetch(`${radarrUrl}/api/v3/queue?movieId=${radarrMovie.id}`, {
+            headers: { "X-Api-Key": radarrApiKey },
+          });
+          let inQueue = false;
+          if (qRes.ok) {
+            const qData = await qRes.json();
+            const recs = qData.records || qData || [];
+            inQueue = recs.some((r: any) => r.movieId === radarrMovie.id);
+          }
+
+          if (!inQueue) {
+            const bestRelease = await prowlarrFindBestItalianRelease(
+              title,
+              "2000",
+              year,
+              originalTitle || radarrMovie.title
+            );
+            if (bestRelease) {
+              const pushTitle = `${radarrMovie.title} (${radarrMovie.year || year || 2024}) ${bestRelease.title.replace(/[:\/]/g, " ")}`;
+              await fetch(`${radarrUrl}/api/v3/release/push`, {
+                method: "POST",
+                headers: {
+                  "X-Api-Key": radarrApiKey,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  title: pushTitle,
+                  downloadUrl: bestRelease.downloadUrl || undefined,
+                  magnetUrl:
+                    bestRelease.magnetUrl ||
+                    (bestRelease.guid?.startsWith("magnet:") ? bestRelease.guid : undefined),
+                  protocol: "torrent",
+                  publishDate: bestRelease.publishDate || new Date().toISOString(),
+                }),
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("Async Prowlarr push error for movie:", err);
+        }
+      }, 1500);
+
+      return NextResponse.json({
+        success: true,
+        message: "Film aggiunto e ricerca/download avviati sul server!",
       });
 
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => null);
-        const errorMessage = Array.isArray(errorData)
-          ? errorData.map((e: any) => e.errorMessage || e.message).join(', ')
-          : (errorData?.message || errorData?.errorMessage || JSON.stringify(errorData) || 'Errore durante la richiesta al server');
-        return NextResponse.json({ error: errorMessage }, { status: res.status });
+    } else if (type === "tv") {
+      const sonarrUrl = process.env.SONARR_URL;
+      const sonarrApiKey = process.env.SONARR_API_KEY;
+
+      if (!sonarrUrl || !sonarrApiKey) {
+        return NextResponse.json({ error: "Sonarr non configurato" }, { status: 503 });
       }
 
-      return NextResponse.json({ success: true, message: 'Serie aggiunta e download avviato!' });
+      let sonarrSeries: any = null;
+
+      // 1. Controlla se la serie esiste già nella libreria Sonarr
+      if (effectiveTmdbId) {
+        const checkRes = await fetch(`${sonarrUrl}/api/v3/series?tmdbId=${effectiveTmdbId}`, {
+          headers: { "X-Api-Key": sonarrApiKey },
+        });
+        if (checkRes.ok) {
+          const list = await checkRes.json();
+          sonarrSeries = Array.isArray(list) ? list[0] : list;
+        }
+      }
+
+      // 2. Se non esiste, effettua lookup e aggiunta
+      if (!sonarrSeries || !sonarrSeries.id) {
+        const lookupTerm = originalTitle || title;
+        const lookupRes = await fetch(
+          `${sonarrUrl}/api/v3/series/lookup?term=${encodeURIComponent(lookupTerm)}`,
+          {
+            headers: { "X-Api-Key": sonarrApiKey },
+          }
+        );
+        const seriesList = await lookupRes.json().catch(() => []);
+        const seriesData = Array.isArray(seriesList) ? seriesList[0] : seriesList;
+
+        if (!seriesData) {
+          return NextResponse.json({ error: "Titolo non trovato nel catalogo Sonarr" }, { status: 404 });
+        }
+
+        const addRes = await fetch(`${sonarrUrl}/api/v3/series`, {
+          method: "POST",
+          headers: {
+            "X-Api-Key": sonarrApiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            ...seriesData,
+            qualityProfileId: 1,
+            rootFolderPath: "/media/SerieTV",
+            monitored: true,
+            addOptions: {
+              searchForMissingEpisodes: true,
+            },
+          }),
+        });
+
+        if (addRes.ok) {
+          sonarrSeries = await addRes.json();
+        } else {
+          const checkRes = await fetch(`${sonarrUrl}/api/v3/series?tmdbId=${effectiveTmdbId}`, {
+            headers: { "X-Api-Key": sonarrApiKey },
+          });
+          if (checkRes.ok) {
+            const list = await checkRes.json();
+            sonarrSeries = Array.isArray(list) ? list[0] : list;
+          }
+        }
+      }
+
+      if (!sonarrSeries || !sonarrSeries.id) {
+        return NextResponse.json(
+          { error: "Impossibile registrare o trovare la serie su Sonarr" },
+          { status: 500 }
+        );
+      }
+
+      // 3. Avvia la ricerca manuale degli episodi
+      await fetch(`${sonarrUrl}/api/v3/command`, {
+        method: "POST",
+        headers: {
+          "X-Api-Key": sonarrApiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "SeriesSearch",
+          seriesId: sonarrSeries.id,
+        }),
+      }).catch(() => {});
+
+      // 4. Push release italiana da Prowlarr se necessario
+      setTimeout(async () => {
+        try {
+          const qRes = await fetch(`${sonarrUrl}/api/v3/queue?seriesId=${sonarrSeries.id}`, {
+            headers: { "X-Api-Key": sonarrApiKey },
+          });
+          let inQueue = false;
+          if (qRes.ok) {
+            const qData = await qRes.json();
+            const recs = qData.records || qData || [];
+            inQueue = recs.some((r: any) => r.seriesId === sonarrSeries.id);
+          }
+
+          if (!inQueue) {
+            const bestRelease = await prowlarrFindBestItalianRelease(
+              title,
+              "5000",
+              year,
+              originalTitle || sonarrSeries.title
+            );
+            if (bestRelease) {
+              const pushTitle = `${sonarrSeries.title} ${bestRelease.title.replace(/[:\/]/g, " ")}`;
+              await fetch(`${sonarrUrl}/api/v3/release/push`, {
+                method: "POST",
+                headers: {
+                  "X-Api-Key": sonarrApiKey,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  title: pushTitle,
+                  downloadUrl: bestRelease.downloadUrl || undefined,
+                  magnetUrl:
+                    bestRelease.magnetUrl ||
+                    (bestRelease.guid?.startsWith("magnet:") ? bestRelease.guid : undefined),
+                  protocol: "torrent",
+                  publishDate: bestRelease.publishDate || new Date().toISOString(),
+                }),
+              });
+            }
+          }
+        } catch (err) {
+          console.warn("Async Prowlarr push error for TV series:", err);
+        }
+      }, 1500);
+
+      return NextResponse.json({
+        success: true,
+        message: "Serie aggiunta e ricerca/download avviati sul server!",
+      });
     }
 
-    return NextResponse.json({ error: 'Tipo non supportato' }, { status: 400 });
+    return NextResponse.json({ error: "Tipo non supportato" }, { status: 400 });
   } catch (error: any) {
-    console.error('Errore API download:', error);
-    return NextResponse.json({ error: error?.message || 'Errore interno del server' }, { status: 500 });
+    console.error("Errore API download:", error);
+    return NextResponse.json({ error: error?.message || "Errore interno del server" }, { status: 500 });
   }
 }

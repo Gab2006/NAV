@@ -168,7 +168,7 @@ export async function checkMediaExistsOnNas(
         statusLabel = 'Attualmente non disponibile';
       } else {
         status = 'missing';
-        statusLabel = 'Attualmente non disponibile';
+        statusLabel = 'In attesa di download';
       }
 
       return {
@@ -242,7 +242,7 @@ export async function checkMediaExistsOnNas(
         statusLabel = 'Attualmente non disponibile';
       } else {
         status = 'missing';
-        statusLabel = 'Attualmente non disponibile';
+        statusLabel = 'In attesa di download';
       }
 
       const progress = hasFile

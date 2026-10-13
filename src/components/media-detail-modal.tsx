@@ -114,7 +114,7 @@ export function MediaDetailModal() {
   const details = fetchedDetails || null;
 
   // 2. Fetch live NAS download status & storage con React Query
-  const { data: statusQueryData, isFetching: isCheckingStatusQuery } = useQuery({
+  const { data: statusQueryData, isLoading: isLoadingStatusQuery } = useQuery({
     queryKey: ["media-status", mediaId, mediaType],
     queryFn: async () => {
       const res = await fetch(`/api/media/status?tmdbId=${mediaId}&type=${mediaType}`);
@@ -129,7 +129,7 @@ export function MediaDetailModal() {
     staleTime: 1000 * 5,
   });
 
-  const isCheckingStatus = isCheckingStatusQuery;
+  const isCheckingStatus = isLoadingStatusQuery && !statusQueryData;
 
   useEffect(() => {
     if (statusQueryData) {
@@ -162,7 +162,7 @@ export function MediaDetailModal() {
   const isDownloadUnavailable =
     indexerResult !== null
       ? !indexerResult.available
-      : downloadStatus === "missing" || downloadStatus === "not_available";
+      : downloadStatus === "not_available";
 
   const handleStartDownload = async () => {
     if (!activeMedia || isDownloadUnavailable) return;
@@ -172,12 +172,21 @@ export function MediaDetailModal() {
         ((activeMedia as any).release_date || activeMedia.releaseDate || (activeMedia as any).first_air_date || "2024").slice(0, 4)
       );
 
+      const title = activeMedia.title || (activeMedia as any).name || "";
+      const originalTitle =
+        activeMedia.originalTitle ||
+        (currentMedia as any)?.originalTitle ||
+        (activeMedia as any).original_title ||
+        (activeMedia as any).original_name ||
+        "";
+
       const res = await fetch("/api/media/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tmdbId: activeMedia.id,
-          title: activeMedia.title || (activeMedia as any).name,
+          title,
+          originalTitle,
           year: isNaN(year) ? 2024 : year,
           type: activeMedia.mediaType || (activeMedia.title ? "movie" : "tv"),
         }),
@@ -207,9 +216,15 @@ export function MediaDetailModal() {
     setIndexerResult(null);
     try {
       const title = activeMedia.title || (activeMedia as any).name || "";
+      const originalTitle =
+        activeMedia.originalTitle ||
+        (currentMedia as any)?.originalTitle ||
+        (activeMedia as any).original_title ||
+        (activeMedia as any).original_name ||
+        "";
       const year = (activeMedia.releaseDate || (activeMedia as any).first_air_date || "2024").slice(0, 4);
       const type = activeMedia.mediaType || "movie";
-      const params = new URLSearchParams({ title, year, type, tmdbId: String(activeMedia.id) });
+      const params = new URLSearchParams({ title, originalTitle, year, type, tmdbId: String(activeMedia.id) });
       const res = await fetch(`/api/media/indexer-lookup?${params}`);
       const data: IndexerLookupResult = await res.json();
       setIndexerResult(data);
@@ -595,10 +610,15 @@ export function MediaDetailModal() {
                       <Clock className="w-3.5 h-3.5 shrink-0" />
                       In coda di download
                     </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 whitespace-nowrap">
+                  ) : downloadStatus === "missing" ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 whitespace-nowrap">
                       <Clock className="w-3.5 h-3.5 shrink-0" />
-                      Non disponibile
+                      In attesa di download
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-400 whitespace-nowrap">
+                      <Clock className="w-3.5 h-3.5 shrink-0" />
+                      Non presente su disco
                     </span>
                   )}
                 </div>
@@ -663,9 +683,11 @@ export function MediaDetailModal() {
                         title={
                           downloadStatus === "queued"
                             ? "In attesa di download"
+                            : downloadStatus === "missing"
+                            ? "Cerca e scarica sul NAS"
                             : isDownloadUnavailable
                             ? "Nessun file disponibile per il download"
-                            : "Scarica"
+                            : "Scarica sul NAS"
                         }
                         aria-label="Scarica"
                         className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-all border ${

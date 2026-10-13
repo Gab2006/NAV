@@ -61,8 +61,17 @@ function formatDateItalian(dateStr?: string | null): string {
 }
 
 /**
- * Verifica che il titolo del release contenga almeno una parola significativa
- * del titolo cercato.
+ * Verifica la presenza di traccia audio o sottotitoli in italiano nel titolo,
+ * in piena conformità al Custom Format "Audio Italiano" (score >= 1000) configurato su Radarr/Sonarr.
+ */
+function hasItalianAudio(title: string, indexer?: string): boolean {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  return /\b(ita|italian|italiano|sub[\s._-]*ita)\b/i.test(t);
+}
+
+/**
+ * Verifica che il titolo del release contenga parole significative del titolo cercato.
  */
 function titleMatches(releaseTitle: string, searchTitle: string, year?: string | null): boolean {
   const normalize = (s: string) =>
@@ -76,7 +85,7 @@ function titleMatches(releaseTitle: string, searchTitle: string, year?: string |
 
   if (searchWords.length === 0) return true;
 
-  const required = searchWords.length <= 2 ? 1 : Math.ceil(searchWords.length * 0.5);
+  const required = searchWords.length <= 2 ? 1 : Math.ceil(searchWords.length * 0.4);
 
   let matched = 0;
   for (const word of searchWords) {
@@ -85,17 +94,41 @@ function titleMatches(releaseTitle: string, searchTitle: string, year?: string |
     }
   }
 
-  if (year && matched >= required) {
-    const hasYear = releaseTitle.includes(year);
-    if (!hasYear) return matched >= Math.ceil(searchWords.length * 0.7);
+  return matched >= required;
+}
+
+/**
+ * Verifica la corrispondenza del release con il titolo italiano o il titolo originale,
+ * e verifica la plausibilità dell'anno se presente.
+ */
+function matchesMedia(
+  releaseTitle: string,
+  searchTitle: string,
+  originalTitle?: string | null,
+  year?: string | null
+): boolean {
+  const matchTitle = titleMatches(releaseTitle, searchTitle, year);
+  const matchOriginal = originalTitle ? titleMatches(releaseTitle, originalTitle, year) : false;
+
+  if (!matchTitle && !matchOriginal) return false;
+
+  if (year) {
+    const yearNum = parseInt(year, 10);
+    if (!isNaN(yearNum)) {
+      const releaseYears = (releaseTitle.match(/\b(19\d\d|20\d\d)\b/g) || []).map((y) =>
+        parseInt(y, 10)
+      );
+      if (releaseYears.length > 0 && !releaseYears.some((y) => Math.abs(y - yearNum) <= 1)) {
+        return false;
+      }
+    }
   }
 
-  return matched >= required;
+  return true;
 }
 
 function isDownloadable(r: any): boolean {
   if (!r || !r.title) return false;
-  // Esclude copie registrate al cinema e bootleg
   if (isBootlegOrCam(r.title)) return false;
 
   const protocol = (r.protocol ?? "").toLowerCase();
@@ -106,12 +139,18 @@ function isDownloadable(r: any): boolean {
   return seeders !== null && seeders > 0;
 }
 
-function parseReleases(raw: any[], searchTitle?: string, year?: string | null): IndexerRelease[] {
+function parseReleases(
+  raw: any[],
+  searchTitle?: string,
+  originalTitle?: string | null,
+  year?: string | null
+): IndexerRelease[] {
   return raw
     .filter((r) => {
       if (!r || !r.title) return false;
       if (!isDownloadable(r)) return false;
-      if (searchTitle && !titleMatches(r.title, searchTitle, year)) return false;
+      if (!hasItalianAudio(r.title, r.indexer)) return false;
+      if (searchTitle && !matchesMedia(r.title, searchTitle, originalTitle, year)) return false;
       return true;
     })
     .map((r) => {
@@ -121,7 +160,10 @@ function parseReleases(raw: any[], searchTitle?: string, year?: string | null): 
       return {
         guid: r.guid || r.downloadUrl || r.magnetUrl || r.infoUrl || r.title,
         title: r.title,
-        indexer: r.indexer || (Array.isArray(r.indexerFlags) ? r.indexerFlags[0] : r.indexerFlags) || "Indexer",
+        indexer:
+          r.indexer ||
+          (Array.isArray(r.indexerFlags) ? r.indexerFlags[0] : r.indexerFlags) ||
+          "Indexer",
         size: r.size || 0,
         seeders: r.seeders ?? undefined,
         leechers: r.leechers ?? undefined,
@@ -160,6 +202,7 @@ async function nasGet(
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
   const title = searchParams.get("title");
+  const originalTitle = searchParams.get("originalTitle");
   const year = searchParams.get("year");
   const tmdbId = searchParams.get("tmdbId");
   const type = searchParams.get("type") || "movie";
@@ -194,14 +237,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json(result);
   }
 
-  const cleanTitle = title.replace(/[:]/g, " ").trim();
+  const cleanTitle = title.replace(/[:\/]/g, " ").trim();
+  const cleanOriginalTitle = originalTitle ? originalTitle.replace(/[:\/]/g, " ").trim() : "";
 
   try {
     // ══════════════════════════════════════════════════════════════════════════
     // FASE 1: VERIFICA RADARR (PER FILM)
     // ══════════════════════════════════════════════════════════════════════════
     if (isMovie && targetUrl && apiKey) {
-      // 1.1 Controlla se il film è già presente nella libreria Radarr
       if (tmdbId) {
         const libRes = await nasGet(targetUrl, apiKey, `/api/v3/movie?tmdbId=${tmdbId}`, 4000);
         const movies = Array.isArray(libRes.data)
@@ -239,18 +282,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           if (relRes.ok && Array.isArray(relRes.data)) {
             const approved = relRes.data.filter(
               (r: any) =>
-                (r.approved === true || !r.rejected) &&
+                r.approved === true &&
+                (!r.rejections || r.rejections.length === 0) &&
+                r.downloadAllowed !== false &&
                 !isBootlegOrCam(r.title) &&
-                isDownloadable(r)
+                isDownloadable(r) &&
+                hasItalianAudio(r.title, r.indexer)
             );
 
             if (approved.length > 0) {
-              const parsed = parseReleases(approved, title, year);
-              result.available = parsed.length > 0;
-              result.count = parsed.length;
-              result.releases = parsed;
-              result.mediaStatus = "released";
-              return NextResponse.json(result);
+              const parsed = parseReleases(approved, cleanTitle, cleanOriginalTitle, year);
+              if (parsed.length > 0) {
+                result.available = true;
+                result.count = parsed.length;
+                result.releases = parsed;
+                result.mediaStatus = "released";
+                return NextResponse.json(result);
+              }
             }
           }
 
@@ -279,7 +327,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         }
       }
 
-      // 1.2 Se non presente in libreria, consultiamo il catalogo Radarr (lookup)
+      // Se non presente in libreria, consultiamo il catalogo Radarr (lookup)
       const lookupPath = tmdbId
         ? `/api/v3/movie/lookup/tmdb?tmdbId=${tmdbId}`
         : `/api/v3/movie/lookup?term=${encodeURIComponent(year ? `${cleanTitle} ${year}` : cleanTitle)}`;
@@ -322,7 +370,6 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // FASE 2: VERIFICA SONARR (PER SERIE TV)
     // ══════════════════════════════════════════════════════════════════════════
     if (!isMovie && targetUrl && apiKey) {
-      // 2.1 Controlla se la serie è già presente nella libreria Sonarr
       if (tmdbId) {
         const libRes = await nasGet(targetUrl, apiKey, `/api/v3/series?tmdbId=${tmdbId}`, 4000);
         const seriesList = Array.isArray(libRes.data)
@@ -356,23 +403,28 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           if (relRes.ok && Array.isArray(relRes.data)) {
             const approved = relRes.data.filter(
               (r: any) =>
-                (r.approved === true || !r.rejected) &&
+                r.approved === true &&
+                (!r.rejections || r.rejections.length === 0) &&
+                r.downloadAllowed !== false &&
                 !isBootlegOrCam(r.title) &&
-                isDownloadable(r)
+                isDownloadable(r) &&
+                hasItalianAudio(r.title, r.indexer)
             );
             if (approved.length > 0) {
-              const parsed = parseReleases(approved, title, year);
-              result.available = parsed.length > 0;
-              result.count = parsed.length;
-              result.releases = parsed;
-              result.mediaStatus = "released";
-              return NextResponse.json(result);
+              const parsed = parseReleases(approved, cleanTitle, cleanOriginalTitle, year);
+              if (parsed.length > 0) {
+                result.available = true;
+                result.count = parsed.length;
+                result.releases = parsed;
+                result.mediaStatus = "released";
+                return NextResponse.json(result);
+              }
             }
           }
         }
       }
 
-      // 2.2 Consultazione Sonarr lookup
+      // Consultazione Sonarr lookup
       const term = tmdbId ? `tmdb:${tmdbId}` : cleanTitle;
       const lookupRes = await nasGet(
         targetUrl,
@@ -401,76 +453,84 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // FASE 3: RICERCA INDEXER VIA PROWLARR (PER TITOLI GIÀ RILASCIATI)
+    // FASE 3: RICERCA INDEXER VIA PROWLARR (PER TITOLI RILASCIATI)
     // ══════════════════════════════════════════════════════════════════════════
     if (prowlarrUrl && prowlarrApiKey) {
       const category = isMovie ? "2000" : "5000";
+      const collectedRaw: any[] = [];
+      const seenGuids = new Set<string>();
 
-      // 3.1 Tentativo per TMDb ID
+      const addRaw = (items: any[]) => {
+        if (!Array.isArray(items)) return;
+        for (const item of items) {
+          const key = item.guid || item.downloadUrl || item.magnetUrl || item.title;
+          if (key && !seenGuids.has(key)) {
+            seenGuids.add(key);
+            collectedRaw.push(item);
+          }
+        }
+      };
+
+      // 3.1 Ricerca via TMDb ID
       if (tmdbId) {
         const idQuery = `{tmdb:${tmdbId}}`;
         const idRes = await nasGet(
           prowlarrUrl,
           prowlarrApiKey,
           `/api/v1/search?query=${encodeURIComponent(idQuery)}&categories=${category}&type=search`,
-          10000
-        );
-
-        if (idRes.ok && Array.isArray(idRes.data)) {
-          const validReleases = parseReleases(idRes.data, cleanTitle, year);
-          if (validReleases.length > 0) {
-            result.releases = validReleases;
-            result.count = validReleases.length;
-            result.available = true;
-            result.mediaStatus = "released";
-            return NextResponse.json(result);
-          }
-        }
-      }
-
-      // 3.2 Ricerca testuale con filtro rigido contro CAM / screener
-      const termWithYear = year && isMovie ? `${cleanTitle} ${year}` : cleanTitle;
-      let textRes = await nasGet(
-        prowlarrUrl,
-        prowlarrApiKey,
-        `/api/v1/search?query=${encodeURIComponent(termWithYear)}&categories=${category}&type=search`,
-        10000
-      );
-
-      if (
-        (!textRes.ok || !Array.isArray(textRes.data) || textRes.data.length === 0) &&
-        year &&
-        isMovie
-      ) {
-        textRes = await nasGet(
-          prowlarrUrl,
-          prowlarrApiKey,
-          `/api/v1/search?query=${encodeURIComponent(cleanTitle)}&categories=${category}&type=search`,
           8000
         );
+        if (idRes.ok && Array.isArray(idRes.data)) {
+          addRaw(idRes.data);
+        }
       }
 
-      if (textRes.ok && Array.isArray(textRes.data)) {
-        const validReleases = parseReleases(textRes.data, cleanTitle, year);
+      // 3.2 Ricerca testuale con titolo italiano
+      const searchQueries = new Set<string>();
+      if (year && isMovie) {
+        searchQueries.add(`${cleanTitle} ${year}`);
+      }
+      searchQueries.add(cleanTitle);
+
+      // 3.3 Ricerca testuale con titolo originale se differente
+      if (cleanOriginalTitle && cleanOriginalTitle.toLowerCase() !== cleanTitle.toLowerCase()) {
+        if (year && isMovie) {
+          searchQueries.add(`${cleanOriginalTitle} ${year}`);
+        }
+        searchQueries.add(cleanOriginalTitle);
+      }
+
+      for (const query of searchQueries) {
+        const textRes = await nasGet(
+          prowlarrUrl,
+          prowlarrApiKey,
+          `/api/v1/search?query=${encodeURIComponent(query)}&categories=${category}&type=search`,
+          9000
+        );
+        if (textRes.ok && Array.isArray(textRes.data)) {
+          addRaw(textRes.data);
+        }
+        // Se abbiamo già trovato almeno una decina di release, non sovraccarichiamo
+        if (collectedRaw.length >= 15) break;
+      }
+
+      const validReleases = parseReleases(collectedRaw, cleanTitle, cleanOriginalTitle, year);
+      if (validReleases.length > 0) {
         result.releases = validReleases;
         result.count = validReleases.length;
-        result.available = validReleases.length > 0;
-        result.mediaStatus = validReleases.length > 0 ? "released" : "missing";
-
-        if (!result.available) {
-          result.error = "Nessun file valido in qualità digitale/home video disponibile";
-          result.reason = "Nessun file conforme ai profili di qualità e lingua del NAS trovato.";
-        }
+        result.available = true;
+        result.mediaStatus = "released";
         return NextResponse.json(result);
       }
     }
 
-    // Se nessun indexer o NAS ha trovato release valide
+    // Se nessun indexer o NAS ha trovato release conformi
     result.available = false;
     result.count = 0;
     result.releases = [];
-    result.error = "Nessun file scaricabile disponibile per il download";
-    result.reason = "Nessun file disponibile per il download.";
+    result.mediaStatus = "missing";
+    result.error = "Nessuna release conforme ai profili di qualità e lingua (Audio Italiano) trovata sui tracker.";
+    result.reason = "Nessuna release conforme ai profili di qualità e lingua (Audio Italiano) trovata sui tracker.";
   } catch (err: any) {
     result.error = "NAS o indexer momentaneamente non raggiungibili";
     console.warn("Indexer lookup exception:", err?.message);

@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       tmdbId: body.tmdbId || body.id,
       type: body.type || body.mediaType || "movie",
       title: body.title || body.name,
+      originalTitle: body.originalTitle || body.original_title || body.originalName || body.original_name,
       year: typeof body.year === "string" ? parseInt(body.year.slice(0, 4)) : body.year,
     };
 
